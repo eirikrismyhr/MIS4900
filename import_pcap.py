@@ -1,6 +1,11 @@
 from neo4j import GraphDatabase
 import pyshark
 from py2neo import Graph
+from datetime import datetime, timedelta
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import time
+
 
 """
 1. Read each packet from pcap file
@@ -11,20 +16,16 @@ from py2neo import Graph
 #graph = Graph(password="mis4900")
 
 uri = "bolt://localhost:7687"
-driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"))
+driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 
 domains = ['google.com', 'facebook.com', 'youtube.com']
 
 
 def create_nodes(tx, cap):
-    result = tx.run("CREATE (d:DNS)-[:RESOLVED_TO]->(i:IP) "
-                    "CREATE (h:HOST) "
-                    "CREATE (i_src:IP) "
-                    "CREATE (i_dst:IP) "
-                    "SET d.trans_id = $trans_id "
-                    "SET h.domain_url = $host "
-                    "SET i_src.ip = $src "
-                    "SET i_dst.ip = $dst "
+    result = tx.run("CREATE (d:DNS {trans_id: $trans_id})-[:RESOLVED_TO]->(i:IP) "
+                    "CREATE (h:HOST {host: $host}) "
+                    "CREATE (i_src:IP {ip: $src}) "
+                    "CREATE (i_dst:IP {ip: $dst}) "
                     "CREATE (d)-[:HAS_QUERY]->(h) "
                     "CREATE (h)-[:RESOLVED_TO]->(i) "
                     "CREATE (i_src)-[:HAS_DNS_REQUEST]->(d) "
@@ -37,31 +38,38 @@ def update_db(transaction, package):
         session.write_transaction(transaction, package)
 
 
-def print_pcap():
-    cap = pyshark.FileCapture('dns.cap')
+def print_pcap(filename):
+    cap = pyshark.FileCapture(filename)
+    print(len(cap))
+    print(type(cap))
     i = 0
-    print(cap[0])
+    #print(cap[0])
     print(cap[0].dns.field_names)
-    print(cap[5].dns.id)
+    #print(cap[5].dns.id)
 
+    event_handler = MyHandler()
+    observer = Observer()
+    observer.schedule(event_handler, path='.', recursive=False)
+    observer.start()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
+
+"""
     for packet in cap:
         print(packet)
         print(i)
         i += 1
-    """
-    
-    packet1 = cap[3]
-    print(packet1)
-    print(packet1.ip.src)
-    print(packet1.dns.qry_name)
-    print(len(cap))
-    """
-
+"""
 
 def pcap_to_dict(filename):
     cap = pyshark.FileCapture(filename)
     for packet in cap:
-        packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': packet.ip.dst, 'host': packet.dns.qry_name}
+        packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': packet.ip.dst, 'host': packet.dns.qry_name,
+                       'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class}
         update_db(create_nodes, packet_dict)
 
 
@@ -86,8 +94,21 @@ def add2neo(pcap):
     tx.commit()
 
 
-#print_pcap()
-pcap_to_dict('dns.cap')
+class MyHandler(FileSystemEventHandler):
+    def __init__(self):
+        self.last_modified = datetime.now()
+
+    def on_modified(self, event):
+        if datetime.now() - self.last_modified < timedelta(seconds=1):
+            return
+        else:
+            self.last_modified = datetime.now()
+        print(f'Event type: {event.event_type}  path : {event.src_path}')
+        print(event.is_directory) # This attribute is also available
+
+
+print_pcap('dns-local.pcap')
+#pcap_to_dict('dns-local.pcap')
 #update_db(delete_db, "test")
 
 #pcap_to_dict('dns.cap')
