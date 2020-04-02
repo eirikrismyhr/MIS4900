@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import time
+import csv
 
 
 """
@@ -13,6 +14,7 @@ import time
 4. Connect nodes from each packet
 """
 #graph = Graph(password="mis4900")
+
 
 uri = "bolt://localhost:7687"
 driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
@@ -37,10 +39,20 @@ def update_db(transaction, package):
 
 def print_pcap(filename):
     cap = pyshark.FileCapture(filename, display_filter='dns')
+    whitelist = csv.reader(open("majestic_1000.csv", "r"), delimiter=",")
     i = 0
+    first = cap[0].dns.qry_name
+    print(type(first))
+    for line in whitelist:
+        if line[2] == cap[50].dns.qry_name:
+            print(line)
+    print("next")
     for packet in cap:
-        print(packet)
-        print(i)
+        print(packet.dns.qry_name)
+        for line in whitelist:
+            if line[2] == str(packet.dns.qry_name):
+                print(line)
+                print(i)
         i += 1
 
 
