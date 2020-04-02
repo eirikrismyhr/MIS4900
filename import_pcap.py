@@ -1,6 +1,5 @@
 from neo4j import GraphDatabase
 import pyshark
-from py2neo import Graph
 from datetime import datetime, timedelta
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -17,8 +16,6 @@ import time
 
 uri = "bolt://localhost:7687"
 driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
-
-domains = ['google.com', 'facebook.com', 'youtube.com']
 
 
 def create_nodes(tx, cap):
@@ -39,13 +36,13 @@ def update_db(transaction, package):
 
 
 def print_pcap(filename):
-    cap = pyshark.FileCapture(filename)
-    print(len(cap))
-    print(type(cap))
+    cap = pyshark.FileCapture(filename, display_filter='dns')
     i = 0
-    #print(cap[0])
-    print(cap[0].dns.field_names)
-    #print(cap[5].dns.id)
+    for packet in cap:
+        print(packet)
+        print(i)
+        i += 1
+
 
     event_handler = MyHandler()
     observer = Observer()
@@ -58,12 +55,6 @@ def print_pcap(filename):
         observer.stop()
     observer.join()
 
-"""
-    for packet in cap:
-        print(packet)
-        print(i)
-        i += 1
-"""
 
 def pcap_to_dict(filename):
     cap = pyshark.FileCapture(filename)
@@ -75,23 +66,6 @@ def pcap_to_dict(filename):
 
 def delete_db(tx):
     result = tx.run("MATCH (n) DETACH DELETE n")
-
-
-def add2neo(pcap):
-    graph = Graph("bolt://localhost:7687", password="mis4900")
-
-    tx = graph.begin()
-    #tx.append(
-     #   "MATCH (u1:User) WHERE u1.id = {A} MERGE (i1:IP {id:{B}, title:{C}, created_at:{D}}) CREATE UNIQUE (u1)-[:CREATED_PLAYLIST]->(p1)",
-      #  {"A": "test", "B": pcap['src'], "C": pcap['dest'], "D": pcap['host']})
-    graph.run("CREATE(d: DNS)-[: RESOLVED_TO]->(i:IP) "
-                "CREATE (h:HOST) "
-                "SET h.domain_url = host "
-                "CREATE (d)-[:HAS_QUERY]->(h) "
-                "CREATE (h)-[:RESOLVED_TO]->(i)",
-              {"host": pcap['host']})
-    tx.process()
-    tx.commit()
 
 
 class MyHandler(FileSystemEventHandler):
@@ -107,7 +81,7 @@ class MyHandler(FileSystemEventHandler):
         print(event.is_directory) # This attribute is also available
 
 
-print_pcap('dns-local.pcap')
+print_pcap('maccdc2012_00000.pcap')
 #pcap_to_dict('dns-local.pcap')
 #update_db(delete_db, "test")
 
