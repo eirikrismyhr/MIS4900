@@ -37,24 +37,24 @@ def update_db(transaction, package):
         session.write_transaction(transaction, package)
 
 
+def check_whitelist(packet):
+    in_list = False
+    whitelist = csv.reader(open("majestic_1000.csv", "r"), delimiter=",")
+    for line in whitelist:
+        if line[2] == packet.dns.qry_name:
+            in_list = True
+    return in_list
+
+
 def print_pcap(filename):
     cap = pyshark.FileCapture(filename, display_filter='dns')
-    whitelist = csv.reader(open("majestic_1000.csv", "r"), delimiter=",")
     i = 0
-    first = cap[0].dns.qry_name
-    print(type(first))
-    for line in whitelist:
-        if line[2] == cap[50].dns.qry_name:
-            print(line)
-    print("next")
     for packet in cap:
-        print(packet.dns.qry_name)
-        for line in whitelist:
-            if line[2] == str(packet.dns.qry_name):
-                print(line)
-                print(i)
+        #print(packet.dns.qry_name)
+        if check_whitelist(packet):
+            print(packet.dns.qry_name)
+            print(i)
         i += 1
-
 
     event_handler = MyHandler()
     observer = Observer()
