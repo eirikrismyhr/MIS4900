@@ -46,13 +46,30 @@ def check_whitelist(packet):
     return in_list
 
 
+def check_blacklist(packet):
+    in_list = False
+    blacklist = open("hosts.txt", "r")
+    domains = []
+    for line in blacklist:
+        #print(line)
+        line = line.split("  ")
+        domains.append(line)
+    for line in domains:
+        if line[1] == packet.dns.qry_name:
+            in_list = True
+    return in_list
+
+
 def print_pcap(filename):
     cap = pyshark.FileCapture(filename, display_filter='dns')
     i = 0
     for packet in cap:
-        #print(packet.dns.qry_name)
+        #print(packet)
         if check_whitelist(packet):
-            print(packet.dns.qry_name)
+            print(packet.dns.qry_name + "Found in whitelist")
+            print(i)
+        if check_blacklist(packet):
+            print(packet.dns.qry_name + "Found in blacklist")
             print(i)
         i += 1
 
@@ -94,6 +111,7 @@ class MyHandler(FileSystemEventHandler):
 
 
 print_pcap('maccdc2012_00000.pcap')
+#check_blacklist()
 #pcap_to_dict('dns-local.pcap')
 #update_db(delete_db, "test")
 
