@@ -64,14 +64,17 @@ def print_pcap(filename):
     cap = pyshark.FileCapture(filename, display_filter='dns')
     i = 0
     for packet in cap:
-        #print(packet)
-        if check_whitelist(packet):
-            print(packet.dns.qry_name + "Found in whitelist")
-            print(i)
-        if check_blacklist(packet):
-            print(packet.dns.qry_name + "Found in blacklist")
-            print(i)
-        i += 1
+        try:
+            print(packet.dns.qry_name)
+            if check_whitelist(packet):
+                #print(packet.dns.qry_name + "Found in whitelist")
+                print(i)
+            if check_blacklist(packet):
+                print(packet.dns.qry_name + "Found in blacklist")
+                print(i)
+            i += 1
+        except AttributeError:
+            print("Missing attribute")
 
     event_handler = MyHandler()
     observer = Observer()
