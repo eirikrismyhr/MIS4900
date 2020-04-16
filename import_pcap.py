@@ -21,15 +21,16 @@ driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 
 
 def create_nodes(tx, cap):
-    result = tx.run("CREATE (d:DNS {trans_id: $trans_id})-[:RESOLVED_TO]->(i:IP) "
-                    "CREATE (h:Host {name: $host}) "
-                    "CREATE (i_src:IP {ip: $src}) "
-                    "CREATE (i_dst:IP {ip: $dst}) "
-                    "CREATE (d)-[:HAS_QUERY]->(h) "
-                    "CREATE (h)-[:RESOLVED_TO]->(i) "
-                    "CREATE (i_src)-[:HAS_DNS_REQUEST]->(d) "
-                    "CREATE (i_dst)-[:HAS_DNS_RESPONSE]->(d)",
-                    {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "trans_id": cap['trans_id']})
+    tx.run("CREATE (d:DNS {trans_id: $trans_id})-[:RESOLVED_TO]->(i:IP) "
+           "CREATE (h:Host {name: $host, in_blacklists: $in_blacklists}) "
+           "CREATE (i_src:IP {ip: $src}) "
+           "CREATE (i_dst:IP {ip: $dst}) "
+           "CREATE (d)-[:HAS_QUERY]->(h) "
+           "CREATE (h)-[:RESOLVED_TO]->(i) "
+           "CREATE (i_src)-[:HAS_DNS_REQUEST]->(d) "
+           "CREATE (i_dst)-[:HAS_DNS_RESPONSE]->(d)",
+           {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "trans_id": cap['trans_id'],
+            "in_blacklists:": cap['in_blacklists']})
     if cap['registrar'] is not None:
         tx.run("MATCH (h:Host {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
@@ -42,6 +43,20 @@ def update_db(transaction, package):
         session.write_transaction(transaction, package)
 
 
+def pcap_to_dict(filename):
+    cap = pyshark.FileCapture(filename)
+    for packet in cap:
+        packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': packet.ip.dst,
+                       'host': packet.dns.qry_name,
+                       'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
+                       'registrar': check_whois(packet.dns.qry_name), 'in_blacklists:': check_blacklist(packet)}
+        update_db(create_nodes, packet_dict)
+
+
+def delete_db(tx):
+    result = tx.run("MATCH (n) DETACH DELETE n")
+
+
 def check_whitelist(packet):
     in_list = False
     whitelist = csv.reader(open("majestic_1000.csv", "r"), delimiter=",")
@@ -52,17 +67,34 @@ def check_whitelist(packet):
 
 
 def check_blacklist(packet):
-    in_list = False
-    blacklist = open("hosts.txt", "r")
-    domains = []
-    for line in blacklist:
-        # print(line)
-        line = line.split("  ")
-        domains.append(line)
-    for line in domains:
-        if line[1] == packet.dns.qry_name:
-            in_list = True
+    in_list = 0
+    malwaredomains = open("hosts.txt", "r")
+    urlhaus = open("urlhaus.txt", "r")
+    blacklists = [malwaredomains, urlhaus]
+    for bl in blacklists:
+        domains = []
+        for line in bl:
+            # print(line)
+            line = line.split("  ")
+            domains.append(line)
+        for line in domains:
+            if line[1] == packet.dns.qry_name:
+                in_list += 1
     return in_list
+
+
+def check_whois(domain):
+    try:
+        whois_query = whois.query(domain)
+        if whois_query is not None:
+            if whois_query.registrar is not '':
+                return whois_query.registrar
+    except whois.exceptions.UnknownTld:
+        print("Unknown TLD")
+    except whois.exceptions.WhoisCommandFailed:
+        print("Command timed out")
+    except whois.exceptions.FailedParsingWhoisOutput or KeyError:
+        print("Error in output")
 
 
 def print_pcap(filename):
@@ -72,10 +104,10 @@ def print_pcap(filename):
         try:
             print(packet.dns.qry_name)
             if check_whitelist(packet):
-                # print(packet.dns.qry_name + "Found in whitelist")
+                print(packet.dns.qry_name + " Found in whitelist")
                 print(i)
-            if check_blacklist(packet):
-                print(packet.dns.qry_name + "Found in blacklist")
+            if check_blacklist(packet) > 0:
+                print(packet.dns.qry_name + " Found in blacklist")
                 print(i)
             i += 1
         except AttributeError:
@@ -93,34 +125,6 @@ def print_pcap(filename):
     observer.join()
 
 
-def pcap_to_dict(filename):
-    cap = pyshark.FileCapture(filename)
-    for packet in cap:
-        packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': packet.ip.dst,
-                       'host': packet.dns.qry_name,
-                       'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
-                       'registrar': check_whois(packet.dns.qry_name)}
-        update_db(create_nodes, packet_dict)
-
-
-def delete_db(tx):
-    result = tx.run("MATCH (n) DETACH DELETE n")
-
-
-def check_whois(domain):
-    try:
-        whois_query = whois.query(domain)
-        if whois_query is not None:
-            if whois_query.registrar is not '':
-                return whois_query.registrar
-    except whois.exceptions.UnknownTld:
-        print("Unknown TLD")
-    except whois.exceptions.WhoisCommandFailed:
-        print("Command timed out")
-    except whois.exceptions.FailedParsingWhoisOutput or KeyError:
-        print("Error in output")
-
-
 class MyHandler(FileSystemEventHandler):
     def __init__(self):
         self.last_modified = datetime.now()
@@ -134,11 +138,8 @@ class MyHandler(FileSystemEventHandler):
         print(event.is_directory)  # This attribute is also available
 
 
-#print_pcap('dns.cap')
+print_pcap('2019-12-03-traffic-analysis-exercise.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
-pcap_to_dict('dns.cap')
+#pcap_to_dict('2019-12-03-traffic-analysis-exercise.pcap')
 # update_db(delete_db, "test")
-
-# pcap_to_dict('dns.cap')
-# update_db("test")
