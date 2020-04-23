@@ -6,6 +6,7 @@ from watchdog.events import FileSystemEventHandler
 import time
 import csv
 import whois
+import pydig
 
 """
 1. Read each packet from pcap file
@@ -21,20 +22,17 @@ driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 
 
 def create_nodes(tx, cap):
-    tx.run("CREATE (d:DNS {trans_id: $trans_id})-[:RESOLVED_TO]->(i:IP) "
-           "CREATE (h:Host {name: $host, in_blacklists: $in_blacklists}) "
+    print(cap['registrar'])
+    tx.run("CREATE (d:Domain {name: $host, in_blacklist: $in_blacklists}) "
            "CREATE (i_src:IP {ip: $src}) "
            "CREATE (i_dst:IP {ip: $dst}) "
-           "CREATE (d)-[:HAS_QUERY]->(h) "
-           "CREATE (h)-[:RESOLVED_TO]->(i) "
-           "CREATE (i_src)-[:HAS_DNS_REQUEST]->(d) "
-           "CREATE (i_dst)-[:HAS_DNS_RESPONSE]->(d)",
-           {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "trans_id": cap['trans_id'],
-            "in_blacklists:": cap['in_blacklists']})
+           "CREATE (i_src)-[:HAS_QUERY]->(d) "
+           "CREATE (d)-[:RESOLVED_TO]->(i_dst) ",
+           {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
     if cap['registrar'] is not None:
-        tx.run("MATCH (h:Host {name: $host}) "
+        tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
-               "MERGE (h)-[:REGISTERED_BY]->(r)",
+               "MERGE (d)-[:REGISTERED_BY]->(r)",
                {"registrar": cap['registrar'], "host": cap['host']})
 
 
@@ -46,40 +44,50 @@ def update_db(transaction, package):
 def pcap_to_dict(filename):
     cap = pyshark.FileCapture(filename)
     for packet in cap:
-        packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': packet.ip.dst,
-                       'host': packet.dns.qry_name,
-                       'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
-                       'registrar': check_whois(packet.dns.qry_name), 'in_blacklists:': check_blacklist(packet)}
-        update_db(create_nodes, packet_dict)
+        if packet.dns.flags_response == '1':
+            #print(packet.dns.qry_name)
+            #print(check_blacklist(packet))
+            packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': pydig.query(packet.dns.qry_name, 'A'),
+                           'host': packet.dns.qry_name,
+                           'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
+                           'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet)}
+            update_db(create_nodes, packet_dict)
 
 
 def delete_db(tx):
-    result = tx.run("MATCH (n) DETACH DELETE n")
+    tx.run("MATCH (n) DETACH DELETE n")
 
 
 def check_whitelist(packet):
     in_list = False
     whitelist = csv.reader(open("majestic_1000.csv", "r"), delimiter=",")
+    domain = packet.dns.qry_name
     for line in whitelist:
-        if line[2] == packet.dns.qry_name:
+        if line[2] == domain or ('www.' + line[2]) == domain:
             in_list = True
+            break
     return in_list
 
 
 def check_blacklist(packet):
-    in_list = 0
+    in_list = False
     malwaredomains = open("hosts.txt", "r")
     urlhaus = open("urlhaus.txt", "r")
     blacklists = [malwaredomains, urlhaus]
+    domain_name = packet.dns.qry_name
     for bl in blacklists:
         domains = []
         for line in bl:
-            # print(line)
+            #print(line)
             line = line.split("  ")
-            domains.append(line)
+            #print(line[1][:-1])
+            if line[0] == '127.0.0.1':
+                domains.append(line)
         for line in domains:
-            if line[1] == packet.dns.qry_name:
-                in_list += 1
+            #print("line[0] is: " + line[0])
+            if line[1] == domain_name or ('www.' + line[1]) == domain_name:
+                in_list = True
+                break
     return in_list
 
 
@@ -102,11 +110,12 @@ def print_pcap(filename):
     i = 0
     for packet in cap:
         try:
-            print(packet.dns.qry_name)
+            if packet.dns.flags_response == '1':
+                print(packet)
             if check_whitelist(packet):
                 print(packet.dns.qry_name + " Found in whitelist")
                 print(i)
-            if check_blacklist(packet) > 0:
+            if check_blacklist(packet):
                 print(packet.dns.qry_name + " Found in blacklist")
                 print(i)
             i += 1
@@ -138,8 +147,8 @@ class MyHandler(FileSystemEventHandler):
         print(event.is_directory)  # This attribute is also available
 
 
-print_pcap('2019-12-03-traffic-analysis-exercise.pcap')
+#print_pcap('maccdc2012_00000.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
-#pcap_to_dict('2019-12-03-traffic-analysis-exercise.pcap')
+pcap_to_dict('dns.cap')
 # update_db(delete_db, "test")
