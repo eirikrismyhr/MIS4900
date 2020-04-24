@@ -27,7 +27,8 @@ def create_nodes(tx, cap):
            "CREATE (i_src:IP {ip: $src}) "
            "CREATE (i_dst:IP {ip: $dst}) "
            "CREATE (i_src)-[:HAS_QUERY]->(d) "
-           "CREATE (d)-[:RESOLVED_TO]->(i_dst) ",
+           "CREATE (d)-[:RESOLVED_TO]->(i_dst) "
+           "CREATE (i_dst)-[:IN_NETWORK]->(a:AS)",
            {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
     if cap['registrar'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
