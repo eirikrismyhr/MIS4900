@@ -23,13 +23,14 @@ driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 
 def create_nodes(tx, cap):
     print(cap['registrar'])
-    tx.run("CREATE (d:Domain {name: $host, in_blacklist: $in_blacklists}) "
+    tx.run("CREATE (d:Domain {name: $host, in_blacklist: $in_blacklists, whitelisted: $whitelisted}) "
            "CREATE (i_src:IP {ip: $src}) "
            "CREATE (i_dst:IP {ip: $dst}) "
            "CREATE (i_src)-[:HAS_QUERY]->(d) "
            "CREATE (d)-[:RESOLVED_TO]->(i_dst) "
            "CREATE (i_dst)-[:IN_NETWORK]->(a:AS)",
-           {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
+           {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists'],
+            "whitelisted": cap['whitelisted']})
     if cap['registrar'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
@@ -51,7 +52,8 @@ def pcap_to_dict(filename):
             packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': pydig.query(packet.dns.qry_name, 'A'),
                            'host': packet.dns.qry_name,
                            'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
-                           'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet)}
+                           'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet),
+                           'whitelisted': check_whitelist(packet)}
             update_db(create_nodes, packet_dict)
 
 
