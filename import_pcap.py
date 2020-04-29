@@ -7,6 +7,8 @@ import time
 import csv
 import whois
 import pydig
+import ipaddress
+import socket
 
 """
 1. Read each packet from pcap file
@@ -23,18 +25,32 @@ driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 
 def create_nodes(tx, cap):
     print(cap['registrar'])
-    tx.run("CREATE (d:Domain {name: $host, in_blacklist: $in_blacklists}) "
+    tx.run("MERGE (d:Domain {name: $host, in_blacklist: $in_blacklists}) "
            "CREATE (i_src:IP {ip: $src}) "
-           "CREATE (i_dst:IP {ip: $dst}) "
-           "CREATE (i_src)-[:HAS_QUERY]->(d) "
-           "CREATE (d)-[:RESOLVED_TO]->(i_dst) "
-           "CREATE (i_dst)-[:IN_NETWORK]->(a:AS)",
+           "MERGE (i_dst:IP {ip: $dst}) "
+           "MERGE (i_src)-[:HAS_QUERY]->(d) "
+           "MERGE (i_dst)-[:IN_NETWORK]->(a:AS)",
            {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
+
+    if cap['dst'] != []:
+        i = 0
+        for ip in cap['dst']:
+            tx.run("MATCH (d:Domain {name: $host}) "
+                   "MERGE (i:IP {ip: $dst}) "
+                   "MERGE (d)-[:RESOLVES_TO]->(i)"
+                   "MERGE (i)-[:IN_NETWORK]->(a:AS)",
+                   {"host": cap['host'], "dst": cap['dst'][i]})
+            i += 1
     if cap['registrar'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
                "MERGE (d)-[:REGISTERED_BY]->(r)",
                {"registrar": cap['registrar'], "host": cap['host']})
+    if cap['ptr'] is not None:
+        tx.run("MATCH (i:IP {ip: $dst}) "
+               "MERGE (d:Domain {name: $ptr}) "
+               "MERGE (i)-[:POINTS_TO]->(d)",
+               {'host': cap['host'], 'dst': cap['dst'], 'ptr': cap['ptr']})
 
 
 def update_db(transaction, package):
@@ -45,13 +61,31 @@ def update_db(transaction, package):
 def pcap_to_dict(filename):
     cap = pyshark.FileCapture(filename)
     for packet in cap:
-        if packet.dns.flags_response == '1':
-            #print(packet.dns.qry_name)
-            #print(check_blacklist(packet))
-            packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': pydig.query(packet.dns.qry_name, 'A'),
+        if 'DNS' in packet:
+            dst = pydig.query(packet.dns.qry_name, 'A')
+            ip_list = []
+            for element in dst:
+                try:
+                    socket.inet_aton(element)
+                    ip_list.append(element)
+                except socket.error:
+                    print("Not an IP address")
+            print(f'Resolves to: {dst}')
+            print(ip_list)
+            if dst != []:
+                try:
+                    ptr = socket.gethostbyaddr(dst[0])
+                except socket.herror:
+                    print("Unknown host")
+            else:
+                ptr = None
+            packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': ip_list,
                            'host': packet.dns.qry_name,
                            'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
-                           'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet)}
+                           'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet),
+                           'ptr': ptr}
+            if ptr != None:
+                packet_dict['ptr'] = ptr[0]
             update_db(create_nodes, packet_dict)
 
 
@@ -106,13 +140,32 @@ def check_whois(domain):
         print("Error in output")
 
 
+def check_ip(ip):
+    in_list = False
+    blacklist = open("firehol_level1.netset", "r")
+    for line in blacklist:
+        if line[0] is not '#':
+            if line is ip or ipaddress.IPv4Address(ip) in ipaddress.IPv4Network(line.strip('\n')):
+                in_list = True
+    return in_list
+
+
 def print_pcap(filename):
     cap = pyshark.FileCapture(filename, display_filter='dns')
     i = 0
     for packet in cap:
         try:
-            if packet.dns.flags_response == '1':
+            print(packet)
+            """
+            if packet.dns.qry_type == '12' and packet.dns.flags_response == '1':
                 print(packet)
+                print(packet.dns.field_names)
+                print(packet.dns.qry_name)
+                print(packet.dns.qry_type)
+                print(packet.dns.ptr_domain_name)
+                print(packet.dns.response_to)
+                print(packet.dns.time)
+            """
             if check_whitelist(packet):
                 print(packet.dns.qry_name + " Found in whitelist")
                 print(i)
@@ -148,8 +201,9 @@ class MyHandler(FileSystemEventHandler):
         print(event.is_directory)  # This attribute is also available
 
 
-#print_pcap('maccdc2012_00000.pcap')
+#print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
-pcap_to_dict('dns.cap')
+pcap_to_dict('botnet-capture-20110810-neris.pcap')
 # update_db(delete_db, "test")
+#print(check_ip('5.44.208.0'))
