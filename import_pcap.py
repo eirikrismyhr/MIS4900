@@ -31,7 +31,6 @@ def create_nodes(tx, cap):
            "MERGE (i_src)-[:HAS_QUERY]->(d) "
            "MERGE (i_dst)-[:IN_NETWORK]->(a:AS)",
            {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
-
     if cap['dst'] != []:
         i = 0
         for ip in cap['dst']:
@@ -83,7 +82,7 @@ def pcap_to_dict(filename):
                            'host': packet.dns.qry_name,
                            'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
                            'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet),
-                           'ptr': ptr}
+                           'ptr': ptr, 'whitelisted': check_whitelist(packet)}
             if ptr != None:
                 packet_dict['ptr'] = ptr[0]
             update_db(create_nodes, packet_dict)
