@@ -10,6 +10,7 @@ import pydig
 import ipaddress
 import socket
 
+
 """
 1. Read each packet from pcap file
 2. Convert each packet to python dict
@@ -32,7 +33,14 @@ def create_nodes(tx, cap):
                "MERGE (i_src:IP_HOST {ip: $src}) "
                "MERGE (i_src)-[:HAS_QUERY]->(d)",
                {"src": cap['src'], "host": cap['host']})
-    if cap['dst'] != []:
+    txt_list = pydig.query(cap['host'], 'TXT')
+    if txt_list:
+        for txt in txt_list:
+            tx.run("MATCH (d:Domain {name: $host}) "
+                   "MERGE (t:TXT {content: $txt})"
+                   "MERGE (d)-[:HAS_DESCRIPTION]->(t)",
+                   {"host": cap['host'], "txt": txt})
+    if cap['dst']:
         for ip in cap['dst']:
             pointers = []
             try:
@@ -49,6 +57,13 @@ def create_nodes(tx, cap):
                        "MERGE (d:Domain {name: $ptr}) "
                        "MERGE (i)-[:POINTS_TO]->(d)",
                        {"ip": ip, "ptr": p[0]})
+                txt_list = pydig.query(p[0], 'TXT')
+                if txt_list:
+                    for txt in txt_list:
+                        tx.run("MATCH (d:Domain {name: $ptr}) "
+                               "MERGE (t:TXT {content: $txt})"
+                               "MERGE (d)-[:HAS_DESCRIPTION]->(t)",
+                               {"ptr": p[0], "txt": txt})
     if cap['registrar'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
