@@ -40,6 +40,11 @@ def create_nodes(tx, cap):
                    "MERGE (t:TXT {content: $txt})"
                    "MERGE (d)-[:HAS_DESCRIPTION]->(t)",
                    {"host": cap['host'], "txt": txt})
+    if not cap['dst']:
+        tx.run("MATCH (d:Domain {name: $host}) "
+               "MERGE (n:NXDOMAIN) "
+               "MERGE (d)-[:NOT_EXIST]->(n)",
+               {"host": cap['host']})
     if cap['dst']:
         for ip in cap['dst']:
             pointers = []
@@ -69,6 +74,18 @@ def create_nodes(tx, cap):
                "MERGE (r:Registrar {name: $registrar}) "
                "MERGE (d)-[:REGISTERED_BY]->(r)",
                {"registrar": cap['registrar'], "host": cap['host']})
+    mailservers = pydig.query(cap["host"], "MX")
+    if mailservers:
+        for server in mailservers:
+            mx_string = server.split(" ")
+            if len(mx_string) == 2:
+                mx = mx_string[1]
+            else:
+                mx = mx_string[0]
+            tx.run("MATCH (d:Domain {name: $host}) "
+                   "MERGE (m:Mail_Server {name: $mx}) "
+                   "MERGE (d)-[:HAS_MAILSERVER]->(m)",
+                   {"host": cap['host'], "mx": mx})
 
 
 def update_db(transaction, package):
