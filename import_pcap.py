@@ -26,30 +26,31 @@ driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 def create_nodes(tx, cap):
     print(cap['registrar'])
     tx.run("MERGE (d:Domain {name: $host, in_blacklist: $in_blacklists}) "
-           "CREATE (i_src:IP {ip: $src}) "
-           "MERGE (i_dst:IP {ip: $dst}) "
-           "MERGE (i_src)-[:HAS_QUERY]->(d) "
-           "MERGE (i_dst)-[:IN_NETWORK]->(a:AS)",
+           "CREATE (i_src:IP_HOST {ip: $src}) "
+           "MERGE (i_src)-[:HAS_QUERY]->(d)",
            {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
     if cap['dst'] != []:
-        i = 0
         for ip in cap['dst']:
+            pointers = []
+            try:
+                pointers.append(socket.gethostbyaddr(ip))
+            except socket.herror:
+                print("Unknown host")
             tx.run("MATCH (d:Domain {name: $host}) "
                    "MERGE (i:IP {ip: $dst}) "
                    "MERGE (d)-[:RESOLVES_TO]->(i)"
                    "MERGE (i)-[:IN_NETWORK]->(a:AS)",
-                   {"host": cap['host'], "dst": cap['dst'][i]})
-            i += 1
+                   {"host": cap['host'], "dst": ip})
+            for p in pointers:
+                tx.run("MATCH (i:IP {ip: $ip}) "
+                       "MERGE (d:Domain {name: $ptr}) "
+                       "MERGE (i)-[:POINTS_TO]->(d)",
+                       {"ip": ip, "ptr": p[0]})
     if cap['registrar'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
                "MERGE (d)-[:REGISTERED_BY]->(r)",
                {"registrar": cap['registrar'], "host": cap['host']})
-    if cap['ptr'] is not None:
-        tx.run("MATCH (i:IP {ip: $dst}) "
-               "MERGE (d:Domain {name: $ptr}) "
-               "MERGE (i)-[:POINTS_TO]->(d)",
-               {'host': cap['host'], 'dst': cap['dst'], 'ptr': cap['ptr']})
 
 
 def update_db(transaction, package):
@@ -71,20 +72,19 @@ def pcap_to_dict(filename):
                     print("Not an IP address")
             print(f'Resolves to: {dst}')
             print(ip_list)
+            pointers = []
             if dst != []:
                 try:
-                    ptr = socket.gethostbyaddr(dst[0])
+                    for addr in dst:
+                        pointers.append(socket.gethostbyaddr(addr))
                 except socket.herror:
                     print("Unknown host")
-            else:
-                ptr = None
+            print(f'Pointers: {pointers}')
             packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': ip_list,
                            'host': packet.dns.qry_name,
                            'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
                            'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet),
-                           'ptr': ptr, 'whitelisted': check_whitelist(packet)}
-            if ptr != None:
-                packet_dict['ptr'] = ptr[0]
+                           'ptr': pointers, 'whitelisted': check_whitelist(packet)}
             update_db(create_nodes, packet_dict)
 
 
@@ -112,13 +112,13 @@ def check_blacklist(packet):
     for bl in blacklists:
         domains = []
         for line in bl:
-            #print(line)
+            # print(line)
             line = line.split("  ")
-            #print(line[1][:-1])
+            # print(line[1][:-1])
             if line[0] == '127.0.0.1':
                 domains.append(line)
         for line in domains:
-            #print("line[0] is: " + line[0])
+            # print("line[0] is: " + line[0])
             if line[1] == domain_name or ('www.' + line[1]) == domain_name:
                 in_list = True
                 break
@@ -200,9 +200,9 @@ class MyHandler(FileSystemEventHandler):
         print(event.is_directory)  # This attribute is also available
 
 
-#print_pcap('botnet-capture-20110810-neris.pcap')
+# print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
 pcap_to_dict('botnet-capture-20110810-neris.pcap')
 # update_db(delete_db, "test")
-#print(check_ip('5.44.208.0'))
+# print(check_ip('5.44.208.0'))
