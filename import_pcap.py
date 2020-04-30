@@ -28,6 +28,20 @@ def create_nodes(tx, cap):
     print(cap['registrar'])
     tx.run("MERGE (d:Domain {name: $host, in_blacklist: $in_blacklists}) ",
            {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
+    cname_list = pydig.query(cap['host'], "CNAME")
+    if cname_list:
+        for cname in cname_list:
+            tx.run("MATCH (d:Domain {name: $host}) "
+                   "MERGE (a:Domain {name: $cname}) "
+                   "MERGE (d)-[:HAS_ALIAS]->(a)",
+                   {"host": cap['host'], "cname": cname})
+    ns_list = pydig.query(cap['host'], "NS")
+    if ns_list:
+        for ns in ns_list:
+            tx.run("MATCH (d:Domain {name: $host}) "
+                   "MERGE (n:Domain {name: $ns })"
+                   "MERGE (n)-[:IS_AUTHORITATIVE_FOR]->(d)",
+                   {"host": cap['host'], "ns": ns})
     if cap['src'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (i_src:IP_HOST {ip: $src}) "
@@ -69,6 +83,13 @@ def create_nodes(tx, cap):
                                "MERGE (t:TXT {content: $txt})"
                                "MERGE (d)-[:HAS_DESCRIPTION]->(t)",
                                {"ptr": p[0], "txt": txt})
+                cname_list = pydig.query(p[0], "CNAME")
+                if cname_list:
+                    for cname in cname_list:
+                        tx.run("MATCH (d:Domain {name: $ptr}) "
+                               "MERGE (a:Domain {name: $cname}) "
+                               "MERGE (d)-[:HAS_ALIAS]->(a)",
+                               {"ptr": p[0], "cname": cname})
     if cap['registrar'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
