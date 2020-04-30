@@ -25,10 +25,13 @@ driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 
 def create_nodes(tx, cap):
     print(cap['registrar'])
-    tx.run("MERGE (d:Domain {name: $host, in_blacklist: $in_blacklists}) "
-           "CREATE (i_src:IP_HOST {ip: $src}) "
-           "MERGE (i_src)-[:HAS_QUERY]->(d)",
+    tx.run("MERGE (d:Domain {name: $host, in_blacklist: $in_blacklists}) ",
            {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
+    if cap['src'] is not None:
+        tx.run("MATCH (d:Domain {name: $host}) "
+               "MERGE (i_src:IP_HOST {ip: $src}) "
+               "MERGE (i_src)-[:HAS_QUERY]->(d)",
+               {"src": cap['src'], "host": cap['host']})
     if cap['dst'] != []:
         for ip in cap['dst']:
             pointers = []
@@ -62,6 +65,9 @@ def pcap_to_dict(filename):
     cap = pyshark.FileCapture(filename)
     for packet in cap:
         if 'DNS' in packet:
+            src = None
+            if packet.dns.flags_response == '0':
+                src = packet.ip.src
             dst = pydig.query(packet.dns.qry_name, 'A')
             ip_list = []
             for element in dst:
@@ -72,19 +78,11 @@ def pcap_to_dict(filename):
                     print("Not an IP address")
             print(f'Resolves to: {dst}')
             print(ip_list)
-            pointers = []
-            if dst != []:
-                try:
-                    for addr in dst:
-                        pointers.append(socket.gethostbyaddr(addr))
-                except socket.herror:
-                    print("Unknown host")
-            print(f'Pointers: {pointers}')
-            packet_dict = {'trans_id': packet.dns.id, 'src': packet.ip.src, 'dst': ip_list,
+            packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': ip_list,
                            'host': packet.dns.qry_name,
                            'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
                            'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet),
-                           'ptr': pointers, 'whitelisted': check_whitelist(packet)}
+                           'whitelisted': check_whitelist(packet)}
             update_db(create_nodes, packet_dict)
 
 
