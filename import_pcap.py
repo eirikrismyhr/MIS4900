@@ -69,7 +69,8 @@ def create_nodes(tx, cap):
             tx.run("MATCH (d:Domain {name: $host}) "
                    "MERGE (i:IP {ip: $dst}) "
                    "MERGE (d)-[:RESOLVES_TO]->(i)"
-                   "MERGE (i)-[:IN_NETWORK]->(a:AS)",
+                   "MERGE (i)-[:IN_NETWORK]->(a:AS) "
+                   "MERGE (adm:ISP)-[:ADMINISTERS]->(a)",
                    {"host": cap['host'], "dst": ip})
             for p in pointers:
                 tx.run("MATCH (i:IP {ip: $ip}) "
@@ -251,9 +252,9 @@ class MyHandler(FileSystemEventHandler):
         print(event.is_directory)  # This attribute is also available
 
 
-# print_pcap('botnet-capture-20110810-neris.pcap')
+print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
-pcap_to_dict('botnet-capture-20110810-neris.pcap')
+#pcap_to_dict('botnet-capture-20110810-neris.pcap')
 # update_db(delete_db, "test")
 # print(check_ip('5.44.208.0'))
