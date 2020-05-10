@@ -132,11 +132,15 @@ def pcap_to_dict(filename):
                     print("Not an IP address")
             print(f'Resolves to: {dst}')
             print(ip_list)
-            packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': ip_list,
+            packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': None,
                            'host': packet.dns.qry_name,
                            'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
                            'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet),
                            'whitelisted': check_whitelist(packet)}
+            try:
+                packet_dict['dst']: packet.dns.a
+            except AttributeError:
+                packet_dict['dst']: None
             update_db(create_nodes, packet_dict)
 
 
@@ -207,6 +211,11 @@ def print_pcap(filename):
     for packet in cap:
         try:
             print(packet)
+            print(packet.dns.field_names)
+            print(packet.dns.resp_type)
+            print(packet.dns.a)
+            print(packet.dns.aaaa)
+
             """
             if packet.dns.qry_type == '12' and packet.dns.flags_response == '1':
                 print(packet)
@@ -249,12 +258,12 @@ class MyHandler(FileSystemEventHandler):
         else:
             self.last_modified = datetime.now()
         print(f'Event type: {event.event_type}  path : {event.src_path}')
-        print(event.is_directory)  # This attribute is also available
+        print(event.is_directory)
 
 
-print_pcap('botnet-capture-20110810-neris.pcap')
+#print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
-#pcap_to_dict('botnet-capture-20110810-neris.pcap')
+pcap_to_dict('botnet-capture-20110810-neris.pcap')
 # update_db(delete_db, "test")
 # print(check_ip('5.44.208.0'))
