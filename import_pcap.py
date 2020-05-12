@@ -39,7 +39,7 @@ def create_nodes(tx, cap):
     if ns_list:
         for ns in ns_list:
             tx.run("MATCH (d:Domain {name: $host}) "
-                   "MERGE (n:Domain {name: $ns })"
+                   "MERGE (n:Domain {name: $ns}) "
                    "MERGE (n)-[:IS_AUTHORITATIVE_FOR]->(d)",
                    {"host": cap['host'], "ns": ns})
     if cap['src'] is not None:
@@ -96,14 +96,8 @@ def create_nodes(tx, cap):
                "MERGE (r:Registrar {name: $registrar}) "
                "MERGE (d)-[:REGISTERED_BY]->(r)",
                {"registrar": cap['registrar'], "host": cap['host']})
-    mailservers = pydig.query(cap["host"], "MX")
-    if mailservers:
-        for server in mailservers:
-            mx_string = server.split(" ")
-            if len(mx_string) == 2:
-                mx = mx_string[1]
-            else:
-                mx = mx_string[0]
+    if cap['mx']:
+        for mx in cap['mx']:
             tx.run("MATCH (d:Domain {name: $host}) "
                    "MERGE (m:Mail_Server {name: $mx}) "
                    "MERGE (d)-[:HAS_MAILSERVER]->(m)",
@@ -136,11 +130,13 @@ def pcap_to_dict(filename):
                            'host': packet.dns.qry_name,
                            'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
                            'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet),
-                           'whitelisted': check_whitelist(packet)}
+                           'whitelisted': check_whitelist(packet), 'ns': None, 'mx': None}
             try:
                 packet_dict['dst']: packet.dns.a
+                packet_dict['ns']: packet.dns.ns
+                packet_dict['mx']: packet.dns.mx_mail_exchange
             except AttributeError:
-                packet_dict['dst']: None
+                print("Resource type not found in packet")
             update_db(create_nodes, packet_dict)
 
 
@@ -213,6 +209,9 @@ def print_pcap(filename):
             print(packet)
             print(packet.dns.field_names)
             print(packet.dns.resp_type)
+            print(packet.dns.resp_name)
+            print(packet.dns.ns)
+            print(packet.dns.mx_mail_exchange)
             print(packet.dns.a)
             print(packet.dns.aaaa)
 
