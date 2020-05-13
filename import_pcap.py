@@ -10,7 +10,6 @@ import pydig
 import ipaddress
 import socket
 
-
 """
 1. Read each packet from pcap file
 2. Convert each packet to python dict
@@ -28,80 +27,59 @@ def create_nodes(tx, cap):
     print(cap['registrar'])
     tx.run("MERGE (d:Domain {name: $host, in_blacklist: $in_blacklists}) ",
            {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
-    cname_list = pydig.query(cap['host'], "CNAME")
-    if cname_list:
-        for cname in cname_list:
-            tx.run("MATCH (d:Domain {name: $host}) "
-                   "MERGE (a:Domain {name: $cname}) "
-                   "MERGE (d)-[:HAS_ALIAS]->(a)",
-                   {"host": cap['host'], "cname": cname})
-    ns_list = pydig.query(cap['host'], "NS")
-    if ns_list:
-        for ns in ns_list:
-            tx.run("MATCH (d:Domain {name: $host}) "
-                   "MERGE (n:Domain {name: $ns}) "
-                   "MERGE (n)-[:IS_AUTHORITATIVE_FOR]->(d)",
-                   {"host": cap['host'], "ns": ns})
+    if cap['cname'] is not None:
+        tx.run("MATCH (d:Domain {name: $host}) "
+               "MERGE (a:Domain {name: $cname}) "
+               "MERGE (d)-[:HAS_ALIAS]->(a)",
+               {"host": cap['host'], "cname": cap['cname']})
+    if cap['ns'] is not None:
+        tx.run("MATCH (d:Domain {name: $host}) "
+               "MERGE (n:Domain {name: $ns}) "
+               "MERGE (n)-[:IS_AUTHORITATIVE_FOR]->(d)",
+               {"host": cap['host'], "ns": cap['ns']})
     if cap['src'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (i_src:IP_HOST {ip: $src}) "
                "MERGE (i_src)-[:HAS_QUERY]->(d)",
                {"src": cap['src'], "host": cap['host']})
-    txt_list = pydig.query(cap['host'], 'TXT')
-    if txt_list:
-        for txt in txt_list:
-            tx.run("MATCH (d:Domain {name: $host}) "
-                   "MERGE (t:TXT {content: $txt})"
-                   "MERGE (d)-[:HAS_DESCRIPTION]->(t)",
-                   {"host": cap['host'], "txt": txt})
-    if not cap['dst']:
+    if cap['txt'] is not None:
+        tx.run("MATCH (d:Domain {name: $host}) "
+               "MERGE (t:TXT {content: $txt})"
+               "MERGE (d)-[:HAS_DESCRIPTION]->(t)",
+               {"host": cap['host'], "txt": cap['txt']})
+    if cap['dst'] is None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (n:NXDOMAIN) "
                "MERGE (d)-[:NOT_EXIST]->(n)",
                {"host": cap['host']})
-    if cap['dst']:
-        for ip in cap['dst']:
-            pointers = []
-            try:
-                pointers.append(socket.gethostbyaddr(ip))
-            except socket.herror:
-                print("Unknown host")
+    if cap['dst'] is not None:
+        tx.run("MATCH (d:Domain {name: $host}) "
+               "MERGE (i:IP {ip: $dst}) "
+               "MERGE (d)-[:RESOLVES_TO]->(i) "
+               "MERGE (i)-[:IN_NETWORK]->(a:AS) "
+               "MERGE (adm:ISP)-[:ADMINISTERS]->(a)",
+               {"host": cap['host'], "dst": cap['dst']})
+        if cap['dst'] is not None:
             tx.run("MATCH (d:Domain {name: $host}) "
-                   "MERGE (i:IP {ip: $dst}) "
-                   "MERGE (d)-[:RESOLVES_TO]->(i)"
-                   "MERGE (i)-[:IN_NETWORK]->(a:AS) "
-                   "MERGE (adm:ISP)-[:ADMINISTERS]->(a)",
-                   {"host": cap['host'], "dst": ip})
-            for p in pointers:
-                tx.run("MATCH (i:IP {ip: $ip}) "
-                       "MERGE (d:Domain {name: $ptr}) "
-                       "MERGE (i)-[:POINTS_TO]->(d)",
-                       {"ip": ip, "ptr": p[0]})
-                txt_list = pydig.query(p[0], 'TXT')
-                if txt_list:
-                    for txt in txt_list:
-                        tx.run("MATCH (d:Domain {name: $ptr}) "
-                               "MERGE (t:TXT {content: $txt})"
-                               "MERGE (d)-[:HAS_DESCRIPTION]->(t)",
-                               {"ptr": p[0], "txt": txt})
-                cname_list = pydig.query(p[0], "CNAME")
-                if cname_list:
-                    for cname in cname_list:
-                        tx.run("MATCH (d:Domain {name: $ptr}) "
-                               "MERGE (a:Domain {name: $cname}) "
-                               "MERGE (d)-[:HAS_ALIAS]->(a)",
-                               {"ptr": p[0], "cname": cname})
+                   "MATCH (i:IP {ip: $dst}) "
+                   "MATCH (d)-[p:RESOLVES_TO]->(i) "
+                   "SET p.time = $time",
+                   {"host": cap['host'], "dst": cap['dst'], "time": cap['time']})
+    if cap['ptr'] is not None:
+        tx.run("MATCH (i:IP {ip: $ip}) "
+               "MERGE (d:Domain {name: $ptr}) "
+               "MERGE (i)-[:POINTS_TO]->(d)",
+               {"ip": cap['dst'], "ptr": cap['ptr']})
     if cap['registrar'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
                "MERGE (d)-[:REGISTERED_BY]->(r)",
                {"registrar": cap['registrar'], "host": cap['host']})
-    if cap['mx']:
-        for mx in cap['mx']:
-            tx.run("MATCH (d:Domain {name: $host}) "
-                   "MERGE (m:Mail_Server {name: $mx}) "
-                   "MERGE (d)-[:HAS_MAILSERVER]->(m)",
-                   {"host": cap['host'], "mx": mx})
+    if cap['mx'] is not None:
+        tx.run("MATCH (d:Domain {name: $host}) "
+               "MERGE (m:Mail_Server {name: $mx}) "
+               "MERGE (d)-[:HAS_MAIL_SERVER]->(m)",
+               {"host": cap['host'], "mx": cap['mx']})
 
 
 def update_db(transaction, package):
@@ -116,25 +94,20 @@ def pcap_to_dict(filename):
             src = None
             if packet.dns.flags_response == '0':
                 src = packet.ip.src
-            dst = pydig.query(packet.dns.qry_name, 'A')
-            ip_list = []
-            for element in dst:
-                try:
-                    socket.inet_aton(element)
-                    ip_list.append(element)
-                except socket.error:
-                    print("Not an IP address")
-            print(f'Resolves to: {dst}')
-            print(ip_list)
             packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': None,
                            'host': packet.dns.qry_name,
                            'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
                            'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet),
-                           'whitelisted': check_whitelist(packet), 'ns': None, 'mx': None}
+                           'whitelisted': check_whitelist(packet), 'ns': None, 'mx': None, 'cname': None, 'txt': None,
+                           'time': None, 'ptr': None}
             try:
-                packet_dict['dst']: packet.dns.a
-                packet_dict['ns']: packet.dns.ns
-                packet_dict['mx']: packet.dns.mx_mail_exchange
+                packet_dict.update({'dst': packet.dns.a})
+                packet_dict.update({'ns': packet.dns.ns})
+                packet_dict.update({'mx': packet.dns.mx_mail_exchange})
+                packet_dict.update({'cname': packet.dns.cname})
+                packet_dict.update({'txt': packet.dns.txt})
+                packet_dict.update({'ptr': packet.dns.ptr})
+                packet_dict.update({'time': packet.dns.time})
             except AttributeError:
                 print("Resource type not found in packet")
             update_db(create_nodes, packet_dict)
