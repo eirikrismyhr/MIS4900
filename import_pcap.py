@@ -24,9 +24,10 @@ driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 
 
 def create_nodes(tx, cap):
-    print(cap['registrar'])
-    tx.run("MERGE (d:Domain {name: $host, in_blacklist: $in_blacklists}) ",
-           {"host": cap['host'], "src": cap['src'], "dst": cap['dst'], "in_blacklists": cap['in_blacklists']})
+    # print(cap['registrar'])
+    tx.run("MERGE (d:Domain {name: $host, blacklisted: $in_blacklists, whitelisted: $whitelisted}) ",
+           {"host": cap['host'], "src": cap['src'], "in_blacklists": cap['in_blacklists'],
+            "whitelisted": cap['whitelisted']})
     if cap['cname'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (a:Domain {name: $cname}) "
@@ -47,11 +48,13 @@ def create_nodes(tx, cap):
                "MERGE (t:TXT {content: $txt})"
                "MERGE (d)-[:HAS_DESCRIPTION]->(t)",
                {"host": cap['host'], "txt": cap['txt']})
+        """
     if cap['dst'] is None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (n:NXDOMAIN) "
                "MERGE (d)-[:NOT_EXIST]->(n)",
                {"host": cap['host']})
+        """
     if cap['dst'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (i:IP {ip: $dst}) "
@@ -80,6 +83,12 @@ def create_nodes(tx, cap):
                "MERGE (m:Mail_Server {name: $mx}) "
                "MERGE (d)-[:HAS_MAIL_SERVER]->(m)",
                {"host": cap['host'], "mx": cap['mx']})
+    if cap['timestamp'] is not None:
+        tx.run("MATCH (d:Domain {name: $host}) "
+               "MATCH (i:IP_HOST {ip: $src}) "
+               "MATCH (i)-[p:HAS_QUERY]->(d) "
+               "SET p.time = $time",
+               {"host": cap['host'], "src": cap['src'], "time": cap['timestamp']})
 
 
 def update_db(transaction, package):
@@ -89,51 +98,64 @@ def update_db(transaction, package):
 
 def pcap_to_dict(filename):
     cap = pyshark.FileCapture(filename)
-    for packet in cap:
-        if 'DNS' in packet:
-            src = None
-            if packet.dns.flags_response == '0':
-                src = packet.ip.src
-            packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': None,
-                           'host': packet.dns.qry_name,
-                           'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
-                           'registrar': check_whois(packet.dns.qry_name), 'in_blacklists': check_blacklist(packet),
-                           'whitelisted': check_whitelist(packet), 'ns': None, 'mx': None, 'cname': None, 'txt': None,
-                           'time': None, 'ptr': None}
-            try:
-                packet_dict.update({'dst': packet.dns.a})
-                packet_dict.update({'ns': packet.dns.ns})
-                packet_dict.update({'mx': packet.dns.mx_mail_exchange})
-                packet_dict.update({'cname': packet.dns.cname})
-                packet_dict.update({'txt': packet.dns.txt})
-                packet_dict.update({'ptr': packet.dns.ptr})
-                packet_dict.update({'time': packet.dns.time})
-            except AttributeError:
-                print("Resource type not found in packet")
+    filetype = filename.split(".")[1]
+    if filetype == 'pcap':
+        for packet in cap:
+            if 'DNS' in packet:
+                src = None
+                if packet.dns.flags_response == '0':
+                    src = packet.ip.src
+                packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': None,
+                               'host': packet.dns.qry_name,
+                               'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
+                               'registrar': check_whois(packet.dns.qry_name),
+                               'in_blacklists': check_blacklist(packet.dns.qry_name),
+                               'whitelisted': check_whitelist(packet.dns.qry_name), 'ns': None, 'mx': None,
+                               'cname': None, 'txt': None, 'time': None, 'ptr': None, 'timestamp': None}
+                try:
+                    packet_dict.update({'dst': packet.dns.a})
+                    packet_dict.update({'ns': packet.dns.ns})
+                    packet_dict.update({'mx': packet.dns.mx_mail_exchange})
+                    packet_dict.update({'cname': packet.dns.cname})
+                    packet_dict.update({'txt': packet.dns.txt})
+                    packet_dict.update({'ptr': packet.dns.ptr_domain_name})
+                    packet_dict.update({'time': packet.dns.time})
+                except AttributeError:
+                    print("Resource type not found in packet")
+                update_db(create_nodes, packet_dict)
+    elif filetype == 'txt':
+        logfile = open(filename, "r")
+        for line in logfile:
+            fields = line.split(" ")
+            domain_name = remove_chars(fields[4])
+            packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
+                           'in_blacklists': check_blacklist(domain_name), 'registrar': check_whois(domain_name),
+                           'whitelisted': check_whitelist(domain_name), 'ns': None, 'mx': None,
+                           'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
             update_db(create_nodes, packet_dict)
+    else:
+        print("Filetype not supported")
 
 
 def delete_db(tx):
     tx.run("MATCH (n) DETACH DELETE n")
 
 
-def check_whitelist(packet):
+def check_whitelist(domain_name):
     in_list = False
     whitelist = csv.reader(open("majestic_1000.csv", "r"), delimiter=",")
-    domain = packet.dns.qry_name
     for line in whitelist:
-        if line[2] == domain or ('www.' + line[2]) == domain:
+        if line[2] == domain_name or ('www.' + line[2]) == domain_name:
             in_list = True
             break
     return in_list
 
 
-def check_blacklist(packet):
+def check_blacklist(domain_name):
     in_list = False
     malwaredomains = open("hosts.txt", "r")
     urlhaus = open("urlhaus.txt", "r")
     blacklists = [malwaredomains, urlhaus]
-    domain_name = packet.dns.qry_name
     for bl in blacklists:
         domains = []
         for line in bl:
@@ -174,39 +196,60 @@ def check_ip(ip):
     return in_list
 
 
-def print_pcap(filename):
-    cap = pyshark.FileCapture(filename, display_filter='dns')
-    i = 0
-    for packet in cap:
-        try:
-            print(packet)
-            print(packet.dns.field_names)
-            print(packet.dns.resp_type)
-            print(packet.dns.resp_name)
-            print(packet.dns.ns)
-            print(packet.dns.mx_mail_exchange)
-            print(packet.dns.a)
-            print(packet.dns.aaaa)
+def remove_chars(string):
+    chars = [')', '(', ':']
+    delete_dict = {sp_character: '' for sp_character in chars}
+    delete_dict[' '] = ''
+    table = str.maketrans(delete_dict)
+    string = string.translate(table)
+    return str(string)
 
-            """
-            if packet.dns.qry_type == '12' and packet.dns.flags_response == '1':
+
+def print_pcap(filename):
+    filetype = filename.split(".")[1]
+
+    if filetype == 'pcap':
+        cap = pyshark.FileCapture(filename, display_filter='dns')
+        i = 0
+        for packet in cap:
+            try:
                 print(packet)
                 print(packet.dns.field_names)
-                print(packet.dns.qry_name)
-                print(packet.dns.qry_type)
-                print(packet.dns.ptr_domain_name)
-                print(packet.dns.response_to)
-                print(packet.dns.time)
-            """
-            if check_whitelist(packet):
-                print(packet.dns.qry_name + " Found in whitelist")
-                print(i)
-            if check_blacklist(packet):
-                print(packet.dns.qry_name + " Found in blacklist")
-                print(i)
-            i += 1
-        except AttributeError:
-            print("Missing attribute")
+                print(packet.dns.resp_type)
+                print(packet.dns.resp_name)
+                print(packet.dns.ns)
+                print(packet.dns.mx_mail_exchange)
+                print(packet.dns.a)
+                print(packet.dns.aaaa)
+
+                """
+                if packet.dns.qry_type == '12' and packet.dns.flags_response == '1':
+                    print(packet)
+                    print(packet.dns.field_names)
+                    print(packet.dns.qry_name)
+                    print(packet.dns.qry_type)
+                    print(packet.dns.ptr_domain_name)
+                    print(packet.dns.response_to)
+                    print(packet.dns.time)
+                """
+                if check_whitelist(packet):
+                    print(packet.dns.qry_name + " Found in whitelist")
+                    print(i)
+                if check_blacklist(packet):
+                    print(packet.dns.qry_name + " Found in blacklist")
+                    print(i)
+                i += 1
+            except AttributeError:
+                print("Missing attribute")
+    elif filetype == 'txt':
+        f = open(filename, "r")
+        for line in f:
+            print(line)
+            fields = line.split(" ")
+            for entry in fields:
+                print(entry)
+    else:
+        print("Unsupported filetype")
 
     event_handler = MyHandler()
     observer = Observer()
@@ -233,9 +276,9 @@ class MyHandler(FileSystemEventHandler):
         print(event.is_directory)
 
 
-#print_pcap('botnet-capture-20110810-neris.pcap')
+# print_pcap('anon_dns_records.txt')
 # print(check_whois("google.com"))
 # check_blacklist()
-pcap_to_dict('botnet-capture-20110810-neris.pcap')
+pcap_to_dict('anon_dns_records.txt')
 # update_db(delete_db, "test")
 # print(check_ip('5.44.208.0'))
