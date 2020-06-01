@@ -155,6 +155,7 @@ def check_blacklist(domain_name):
     in_list = False
     malwaredomains = open("hosts.txt", "r")
     urlhaus = open("urlhaus.txt", "r")
+    phishtank = csv.reader(open("verified_online.csv", "r"), delimiter=",")
     blacklists = [malwaredomains, urlhaus]
     for bl in blacklists:
         domains = []
@@ -169,6 +170,11 @@ def check_blacklist(domain_name):
             if line[1] == domain_name or ('www.' + line[1]) == domain_name:
                 in_list = True
                 break
+    for line in phishtank:
+        variations = [domain_name + "/", "www." + domain_name]
+        if line[1][7:] in variations or line[1][8:] in variations:
+            in_list = True
+            break
     return in_list
 
 
@@ -274,11 +280,9 @@ class MyHandler(FileSystemEventHandler):
             self.last_modified = datetime.now()
         print(f'Event type: {event.event_type}  path : {event.src_path}')
         print(event.is_directory)
-
-
-# print_pcap('anon_dns_records.txt')
+print_pcap('anon_dns_records.txt')
 # print(check_whois("google.com"))
 # check_blacklist()
-pcap_to_dict('anon_dns_records.txt')
+#pcap_to_dict('anon_dns_records.txt')
 # update_db(delete_db, "test")
 # print(check_ip('5.44.208.0'))
