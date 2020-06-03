@@ -143,7 +143,7 @@ def delete_db(tx):
 
 def check_whitelist(domain_name):
     in_list = False
-    whitelist = csv.reader(open("majestic_1000.csv", "r"), delimiter=",")
+    whitelist = csv.reader(open("Whitelists/majestic_1000.csv", "r"), delimiter=",")
     for line in whitelist:
         if line[2] == domain_name or ('www.' + line[2]) == domain_name:
             in_list = True
@@ -153,10 +153,11 @@ def check_whitelist(domain_name):
 
 def check_blacklist(domain_name):
     in_list = False
-    malwaredomains = open("hosts.txt", "r")
-    urlhaus = open("urlhaus.txt", "r")
-    phishtank = csv.reader(open("verified_online.csv", "r"), delimiter=",")
-    blacklists = [malwaredomains, urlhaus]
+    malwaredomainlist = open("Blacklists/malwaredomainlist_hosts.txt", "r")
+    urlhaus = open("Blacklists/urlhaus.txt", "r")
+    phishtank = csv.reader(open("Blacklists/verified_online(phishtank).csv", "r"), delimiter=",")
+    cybercrime_tracker = open("Blacklists/CYBERCRiME-06-03-20.txt", "r")
+    blacklists = [malwaredomainlist, urlhaus]
     for bl in blacklists:
         domains = []
         for line in bl:
@@ -171,10 +172,18 @@ def check_blacklist(domain_name):
                 in_list = True
                 break
     for line in phishtank:
-        variations = [domain_name + "/", "www." + domain_name]
+        variations = [domain_name + "/", "www." + domain_name, domain_name[4:]]
         if line[1][7:] in variations or line[1][8:] in variations:
             in_list = True
             break
+    for line in cybercrime_tracker:
+        variations = [domain_name + "/", "www." + domain_name, domain_name[4:]]
+        if line in variations:
+            in_list = True
+            break
+    for f in blacklists:
+        f.close()
+    cybercrime_tracker.close()
     return in_list
 
 
@@ -194,11 +203,18 @@ def check_whois(domain):
 
 def check_ip(ip):
     in_list = False
-    blacklist = open("firehol_level1.netset", "r")
-    for line in blacklist:
-        if line[0] is not '#':
-            if line is ip or ipaddress.IPv4Address(ip) in ipaddress.IPv4Network(line.strip('\n')):
-                in_list = True
+    firehol = open("Blacklists/firehol_level1.netset", "r")
+    malwaredomainlist_ip = open("Blacklists/malwaredomainlist_ip.txt", "r")
+    cinsscore = open("Blacklists/ci-badguys.txt", "")
+    blacklists = [firehol, malwaredomainlist_ip, cinsscore]
+    for blacklist in blacklists:
+        for line in blacklist:
+            if line[0] is not '#':
+                if line is ip or ipaddress.IPv4Address(ip) in ipaddress.IPv4Network(line.strip('\n')):
+                    in_list = True
+                    break
+    for file in blacklists:
+        file.close()
     return in_list
 
 
