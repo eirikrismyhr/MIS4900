@@ -57,11 +57,11 @@ def create_nodes(tx, cap):
         """
     if cap['dst'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
-               "MERGE (i:IP {ip: $dst}) "
+               "MERGE (i:IP {ip: $dst, blacklisted: $blacklisted}) "
                "MERGE (d)-[:RESOLVES_TO]->(i) "
                "MERGE (i)-[:IN_NETWORK]->(a:AS) "
                "MERGE (adm:ISP)-[:ADMINISTERS]->(a)",
-               {"host": cap['host'], "dst": cap['dst']})
+               {"host": cap['host'], "dst": cap['dst'], "blacklisted": check_ip(cap['dst'])})
         if cap['dst'] is not None:
             tx.run("MATCH (d:Domain {name: $host}) "
                    "MATCH (i:IP {ip: $dst}) "
@@ -205,7 +205,7 @@ def check_ip(ip):
     in_list = False
     firehol = open("Blacklists/firehol_level1.netset", "r")
     malwaredomainlist_ip = open("Blacklists/malwaredomainlist_ip.txt", "r")
-    cinsscore = open("Blacklists/ci-badguys.txt", "")
+    cinsscore = open("Blacklists/ci-badguys.txt", "r")
     blacklists = [firehol, malwaredomainlist_ip, cinsscore]
     for blacklist in blacklists:
         for line in blacklist:
@@ -296,9 +296,9 @@ class MyHandler(FileSystemEventHandler):
             self.last_modified = datetime.now()
         print(f'Event type: {event.event_type}  path : {event.src_path}')
         print(event.is_directory)
-print_pcap('anon_dns_records.txt')
+#print_pcap('anon_dns_records.txt')
 # print(check_whois("google.com"))
 # check_blacklist()
-#pcap_to_dict('anon_dns_records.txt')
+pcap_to_dict('botnet-capture-20110810-neris.pcap')
 # update_db(delete_db, "test")
 # print(check_ip('5.44.208.0'))
