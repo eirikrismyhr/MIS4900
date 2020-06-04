@@ -87,7 +87,7 @@ def create_nodes(tx, cap):
         tx.run("MATCH (d:Domain {name: $host}) "
                "MATCH (i:IP_HOST {ip: $src}) "
                "MATCH (i)-[p:HAS_QUERY]->(d) "
-               "SET p.time = $time",
+               "SET p.last_seen = $time",
                {"host": cap['host'], "src": cap['src'], "time": cap['timestamp']})
 
 
@@ -172,12 +172,12 @@ def check_blacklist(domain_name):
                 in_list = True
                 break
     for line in phishtank:
-        variations = [domain_name + "/", "www." + domain_name, domain_name[4:]]
+        variations = [str(domain_name) + "/", "www." + str(domain_name), domain_name[4:]]
         if line[1][7:] in variations or line[1][8:] in variations:
             in_list = True
             break
     for line in cybercrime_tracker:
-        variations = [domain_name + "/", "www." + domain_name, domain_name[4:]]
+        variations = [str(domain_name) + "/", "www." + str(domain_name), domain_name[4:]]
         if line in variations:
             in_list = True
             break
@@ -237,6 +237,7 @@ def print_pcap(filename):
             try:
                 print(packet)
                 print(packet.dns.field_names)
+                print(packet.dns.time)
                 print(packet.dns.resp_type)
                 print(packet.dns.resp_name)
                 print(packet.dns.ns)
@@ -296,9 +297,9 @@ class MyHandler(FileSystemEventHandler):
             self.last_modified = datetime.now()
         print(f'Event type: {event.event_type}  path : {event.src_path}')
         print(event.is_directory)
-#print_pcap('anon_dns_records.txt')
+#print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
-pcap_to_dict('botnet-capture-20110810-neris.pcap')
+pcap_to_dict('anon_dns_records.txt')
 # update_db(delete_db, "test")
 # print(check_ip('5.44.208.0'))
