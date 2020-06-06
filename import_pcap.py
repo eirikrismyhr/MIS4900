@@ -18,11 +18,12 @@ import socket
 """
 # graph = Graph(password="mis4900")
 
-
+# Loads the official Neo4j Python driver
 uri = "bolt://localhost:7687"
 driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 
 
+# Creates nodes and relationships in Neo4j
 def create_nodes(tx, cap):
     # print(cap['registrar'])
     tx.run("MERGE (d:Domain {name: $host, blacklisted: $in_blacklists, whitelisted: $whitelisted}) ",
@@ -89,13 +90,14 @@ def create_nodes(tx, cap):
                "MATCH (i)-[p:HAS_QUERY]->(d) "
                "SET p.last_seen = $time",
                {"host": cap['host'], "src": cap['src'], "time": cap['timestamp']})
+    # If first_seen is not set, set to timestamp
 
 
 def update_db(transaction, package):
     with driver.session() as session:
         session.write_transaction(transaction, package)
 
-
+# Creates dictionary with values from log file and passes it to create_nodes
 def pcap_to_dict(filename):
     cap = pyshark.FileCapture(filename)
     filetype = filename.split(".")[1]
@@ -137,10 +139,12 @@ def pcap_to_dict(filename):
         print("Filetype not supported")
 
 
+# Deletes database, if necessary
 def delete_db(tx):
     tx.run("MATCH (n) DETACH DELETE n")
 
 
+# Checks if domain names in log files are known legitimate domains
 def check_whitelist(domain_name):
     in_list = False
     whitelist = csv.reader(open("Whitelists/majestic_1000.csv", "r"), delimiter=",")
@@ -151,6 +155,7 @@ def check_whitelist(domain_name):
     return in_list
 
 
+# Checks if domain names are found in any malicious domain blacklists
 def check_blacklist(domain_name):
     in_list = False
     malwaredomainlist = open("Blacklists/malwaredomainlist_hosts.txt", "r")
@@ -187,6 +192,7 @@ def check_blacklist(domain_name):
     return in_list
 
 
+# Finds the registrar of a specific domain name
 def check_whois(domain):
     try:
         whois_query = whois.query(domain)
@@ -201,6 +207,7 @@ def check_whois(domain):
         print("Error in output")
 
 
+# Checks if a resolved IP address is found in any IP blacklists
 def check_ip(ip):
     in_list = False
     firehol = open("Blacklists/firehol_level1.netset", "r")
@@ -218,6 +225,7 @@ def check_ip(ip):
     return in_list
 
 
+# Strips unwanted characters from domain names
 def remove_chars(string):
     chars = [')', '(', ':']
     delete_dict = {sp_character: '' for sp_character in chars}
@@ -227,6 +235,7 @@ def remove_chars(string):
     return str(string)
 
 
+# Prints content of log files, packet by packet
 def print_pcap(filename):
     filetype = filename.split(".")[1]
 
@@ -286,6 +295,7 @@ def print_pcap(filename):
     observer.join()
 
 
+# Checks if any files have been modified
 class MyHandler(FileSystemEventHandler):
     def __init__(self):
         self.last_modified = datetime.now()
@@ -297,6 +307,7 @@ class MyHandler(FileSystemEventHandler):
             self.last_modified = datetime.now()
         print(f'Event type: {event.event_type}  path : {event.src_path}')
         print(event.is_directory)
+        
 #print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
