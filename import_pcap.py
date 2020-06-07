@@ -43,7 +43,7 @@ def create_nodes(tx, cap):
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (i_src:IP_HOST {ip: $src}) "
                "MERGE (i_src)-[p:HAS_QUERY]->(d)",
-               {"src": cap['src'], "host": cap['host'],})
+               {"src": cap['src'], "host": cap['host'], })
     if cap['txt'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (t:TXT {content: $txt})"
@@ -77,8 +77,11 @@ def create_nodes(tx, cap):
     if cap['registrar'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
-               "MERGE (d)-[:REGISTERED_BY]->(r)",
-               {"registrar": cap['registrar'], "host": cap['host']})
+               "MERGE (d)-[p:REGISTERED_BY]->(r) "
+               "SET p.creation_date = $creation_date "
+               "SET p.last_updated = $last_updated",
+               {"registrar": cap['registrar'], "host": cap['host'], "creation_date": cap['creation_date'],
+                "last_updated": cap['last_updated']})
     if cap['mx'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (m:Mail_Server {name: $mx}) "
@@ -96,6 +99,7 @@ def create_nodes(tx, cap):
                "SET p.first_seen = $time",
                {"host": cap['host'], "src": cap['src'], "time": cap['timestamp']})
 
+
 # Performs cypher transaction
 def update_db(transaction, package):
     with driver.session() as session:
@@ -112,11 +116,12 @@ def pcap_to_dict(filename):
                 src = None
                 if packet.dns.flags_response == '0':
                     src = packet.ip.src
+                whois_result = check_whois(packet.dns.qry_name)
                 packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': None,
                                'host': packet.dns.qry_name,
                                'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
-                               'registrar': check_whois(packet.dns.qry_name),
-                               'in_blacklists': check_blacklist(packet.dns.qry_name),
+                               'registrar': None, 'creation_date': None,
+                               'last_updated': None, 'in_blacklists': check_blacklist(packet.dns.qry_name),
                                'whitelisted': check_whitelist(packet.dns.qry_name), 'ns': None, 'mx': None,
                                'cname': None, 'txt': None, 'time': None, 'ptr': None, 'timestamp': None}
                 try:
@@ -129,16 +134,25 @@ def pcap_to_dict(filename):
                     packet_dict.update({'time': packet.dns.time})
                 except AttributeError:
                     print("Resource type not found in packet")
+                if whois_result:
+                    packet_dict.update({'registrar': whois_result['registrar']})
+                    packet_dict.update({'creation_date': whois_result['creation_date']})
+                    packet_dict.update({'last_updated': whois_result['last_updated']})
                 update_db(create_nodes, packet_dict)
     elif filetype == 'txt':
         logfile = open(filename, "r")
         for line in logfile:
             fields = line.split(" ")
             domain_name = remove_chars(fields[4])
+            whois_result = check_whois(domain_name)
             packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
-                           'in_blacklists': check_blacklist(domain_name), 'registrar': check_whois(domain_name),
-                           'whitelisted': check_whitelist(domain_name), 'ns': None, 'mx': None,
+                           'in_blacklists': check_blacklist(domain_name), 'registrar': None, 'creation_date': None,
+                           'last_updated': None, 'whitelisted': check_whitelist(domain_name), 'ns': None, 'mx': None,
                            'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
+            if whois_result:
+                packet_dict.update({'registrar': whois_result['registrar']})
+                packet_dict.update({'creation_date': whois_result['creation_date']})
+                packet_dict.update({'last_updated': whois_result['last_updated']})
             update_db(create_nodes, packet_dict)
     else:
         print("Filetype not supported")
@@ -197,13 +211,15 @@ def check_blacklist(domain_name):
     return in_list
 
 
-# Finds the registrar of a specific domain name
+# Finds registrar info for a specific domain name
 def check_whois(domain):
     try:
         whois_query = whois.query(domain)
         if whois_query is not None:
             if whois_query.registrar is not '':
-                return whois_query.registrar
+                return {"registrar": whois_query.registrar,
+                        "creation_date": whois_query.creation_date,
+                        "last_updated": whois_query.last_updated}
     except whois.exceptions.UnknownTld:
         print("Unknown TLD")
     except whois.exceptions.WhoisCommandFailed:
