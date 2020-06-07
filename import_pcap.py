@@ -42,8 +42,8 @@ def create_nodes(tx, cap):
     if cap['src'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (i_src:IP_HOST {ip: $src}) "
-               "MERGE (i_src)-[:HAS_QUERY]->(d)",
-               {"src": cap['src'], "host": cap['host']})
+               "MERGE (i_src)-[p:HAS_QUERY]->(d)",
+               {"src": cap['src'], "host": cap['host'],})
     if cap['txt'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (t:TXT {content: $txt})"
@@ -90,12 +90,17 @@ def create_nodes(tx, cap):
                "MATCH (i)-[p:HAS_QUERY]->(d) "
                "SET p.last_seen = $time",
                {"host": cap['host'], "src": cap['src'], "time": cap['timestamp']})
-    # If first_seen is not set, set to timestamp
+        tx.run("MATCH (d:Domain {name: $host}) "
+               "MATCH (i:IP_HOST {ip: $src}) "
+               "MATCH (i)-[p:HAS_QUERY]->(d) WHERE NOT EXISTS(p.first_seen) "
+               "SET p.first_seen = $time",
+               {"host": cap['host'], "src": cap['src'], "time": cap['timestamp']})
 
-
+# Performs cypher transaction
 def update_db(transaction, package):
     with driver.session() as session:
         session.write_transaction(transaction, package)
+
 
 # Creates dictionary with values from log file and passes it to create_nodes
 def pcap_to_dict(filename):
@@ -307,8 +312,9 @@ class MyHandler(FileSystemEventHandler):
             self.last_modified = datetime.now()
         print(f'Event type: {event.event_type}  path : {event.src_path}')
         print(event.is_directory)
-        
-#print_pcap('botnet-capture-20110810-neris.pcap')
+
+
+# print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
 pcap_to_dict('anon_dns_records.txt')
