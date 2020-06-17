@@ -10,6 +10,7 @@ import pydig
 import ipaddress
 import socket
 
+
 """
 1. Read each packet from pcap file
 2. Convert each packet to python dict
@@ -43,7 +44,7 @@ def create_nodes(tx, cap):
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (i_src:IP_HOST {ip: $src}) "
                "MERGE (i_src)-[p:HAS_QUERY]->(d)",
-               {"src": cap['src'], "host": cap['host'], })
+               {"src": cap['src'], "host": cap['host']})
     if cap['txt'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (t:TXT {content: $txt})"
@@ -145,15 +146,18 @@ def pcap_to_dict(filename):
             fields = line.split(" ")
             domain_name = remove_chars(fields[4])
             whois_result = check_whois(domain_name)
-            packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
-                           'in_blacklists': check_blacklist(domain_name), 'registrar': None, 'creation_date': None,
-                           'last_updated': None, 'whitelisted': check_whitelist(domain_name), 'ns': None, 'mx': None,
-                           'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
-            if whois_result:
-                packet_dict.update({'registrar': whois_result['registrar']})
-                packet_dict.update({'creation_date': whois_result['creation_date']})
-                packet_dict.update({'last_updated': whois_result['last_updated']})
-            update_db(create_nodes, packet_dict)
+            try:
+                packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
+                               'in_blacklists': check_blacklist(domain_name), 'registrar': None, 'creation_date': None,
+                               'last_updated': None, 'whitelisted': check_whitelist(domain_name), 'ns': None, 'mx': None,
+                               'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
+                if whois_result:
+                    packet_dict.update({'registrar': whois_result['registrar']})
+                    packet_dict.update({'creation_date': whois_result['creation_date']})
+                    packet_dict.update({'last_updated': whois_result['last_updated']})
+                update_db(create_nodes, packet_dict)
+            except AttributeError:
+                print("Resource type not found in packet")
     else:
         print("Filetype not supported")
 
@@ -333,6 +337,10 @@ class MyHandler(FileSystemEventHandler):
 # print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
+start_time = time.time()
 pcap_to_dict('anon_dns_records.txt')
+
 # update_db(delete_db, "test")
 # print(check_ip('5.44.208.0'))
+
+print("--- %s seconds ---" % round(time.time() - start_time,2))
