@@ -10,7 +10,6 @@ import pydig
 import ipaddress
 import socket
 
-
 """
 1. Read each packet from pcap file
 2. Convert each packet to python dict
@@ -21,7 +20,8 @@ import socket
 
 # Loads the official Neo4j Python driver
 uri = "bolt://localhost:7687"
-driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
+# driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
+driver = GraphDatabase.driver(uri, auth=("neo4j", "test"), encrypted=False)
 
 
 # Creates nodes and relationships in Neo4j
@@ -145,11 +145,12 @@ def pcap_to_dict(filename):
         for line in logfile:
             fields = line.split(" ")
             domain_name = remove_chars(fields[4])
-            whois_result = check_whois(domain_name)
+            whois_result = None
             try:
                 packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
                                'in_blacklists': check_blacklist(domain_name), 'registrar': None, 'creation_date': None,
-                               'last_updated': None, 'whitelisted': check_whitelist(domain_name), 'ns': None, 'mx': None,
+                               'last_updated': None, 'whitelisted': check_whitelist(domain_name), 'ns': None,
+                               'mx': None,
                                'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
                 if whois_result:
                     packet_dict.update({'registrar': whois_result['registrar']})
@@ -228,8 +229,10 @@ def check_whois(domain):
         print("Unknown TLD")
     except whois.exceptions.WhoisCommandFailed:
         print("Command timed out")
-    except whois.exceptions.FailedParsingWhoisOutput or KeyError:
+    except whois.exceptions.FailedParsingWhoisOutput:
         print("Error in output")
+    except KeyError:
+        print("Key error")
 
 
 # Checks if a resolved IP address is found in any IP blacklists
@@ -334,13 +337,64 @@ class MyHandler(FileSystemEventHandler):
         print(event.is_directory)
 
 
+def load_csv():
+    with driver.session() as session:
+        session.run("USING PERIODIC COMMIT "
+                    "LOAD CSV WITH HEADERS FROM $file AS row "
+                    "MERGE (src:IP_Host {ip: row.src}) "
+                    "MERGE (d:Domain {name: row.domain_name}) "
+                    "MERGE (src)-[query:HAS_QUERY]->(d) "
+                    "SET query.last_seen = row.time",
+                    {"file": "file:///eidsiva.csv"})
+        """"
+        tx.run("LOAD CSV WITH HEADERS FROM $file AS row "
+               "MERGE (d:Domain {name: row.domain_name})",
+               {"file": "file:///eidsiva.csv"})
+        tx.run("LOAD CSV WITH HEADERS FROM $file AS row "
+               "MATCH (src:IP_Host {ip: row.src}) "
+               "MATCH (d:Domain {name: row.domain_name} "
+               "MERGE (src)-[query:HAS_QUERY]->(d)",
+                {"file": "file:///eidsiva.csv"})
+    """
+    """
+        tx.run("LOAD CSV WITH HEADERS FROM $file AS row "
+               "WITH row LIMIT 100 "
+               "MATCH (src:IP_Host {ip: row.src}) "
+               "MATCH (d:Domain {name: row.domain_name}) "
+               "MATCH (src)-[p:HAS_QUERY]->(d) WHERE NOT EXISTS(p.first_seen) "
+               "SET p.first_seen = row.time",
+               {"file": "file:///eidsiva.csv"})
+         
+        print(result)
+          """
+
+
+"""
+def query_db(self):
+    with driver.session() as session:
+        session.run(load_csv)
+"""
+
 # print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
 start_time = time.time()
-pcap_to_dict('anon_dns_records.txt')
+# pcap_to_dict('anon_dns_records.txt')
 
 # update_db(delete_db, "test")
 # print(check_ip('5.44.208.0'))
+"""
+with open('datasets/eidsiva_test.csv', newline='') as csvfile:
+    reader = csv.reader(csvfile, delimiter=',')
+    for row in reader:
+        for field in row:
+            if '"' in field:
+                print(row)
+"""
 
-print("--- %s seconds ---" % round(time.time() - start_time,2))
+load_csv()
+"""
+for line in query_db(csv_load):
+    print(line)
+"""
+print("--- %s seconds ---" % round(time.time() - start_time, 2))
