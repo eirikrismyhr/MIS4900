@@ -6,9 +6,7 @@ from watchdog.events import FileSystemEventHandler
 import time
 import csv
 import whois
-import pydig
 import ipaddress
-import socket
 
 """
 1. Read each packet from pcap file
@@ -21,7 +19,7 @@ import socket
 # Loads the official Neo4j Python driver
 uri = "bolt://localhost:7687"
 # driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
-driver = GraphDatabase.driver(uri, auth=("neo4j", "test"), encrypted=False)
+driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 
 
 # Creates nodes and relationships in Neo4j
@@ -141,24 +139,29 @@ def pcap_to_dict(filename):
                     packet_dict.update({'last_updated': whois_result['last_updated']})
                 update_db(create_nodes, packet_dict)
     elif filetype == 'txt':
-        logfile = open(filename, "r")
-        for line in logfile:
-            fields = line.split(" ")
-            domain_name = remove_chars(fields[4])
-            whois_result = None
-            try:
-                packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
-                               'in_blacklists': check_blacklist(domain_name), 'registrar': None, 'creation_date': None,
-                               'last_updated': None, 'whitelisted': check_whitelist(domain_name), 'ns': None,
-                               'mx': None,
-                               'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
-                if whois_result:
-                    packet_dict.update({'registrar': whois_result['registrar']})
-                    packet_dict.update({'creation_date': whois_result['creation_date']})
-                    packet_dict.update({'last_updated': whois_result['last_updated']})
-                update_db(create_nodes, packet_dict)
-            except AttributeError:
-                print("Resource type not found in packet")
+        with open(filename, "r") as logfile:
+            i = 0
+            for line in logfile:
+                i += 1
+                if i > 10000:
+                    return
+                fields = line.split(" ")
+                domain_name = remove_chars(fields[4])
+                whois_result = None
+                try:
+                    packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
+                                   'in_blacklists': check_blacklist(domain_name), 'registrar': None,
+                                   'creation_date': None,
+                                   'last_updated': None, 'whitelisted': check_whitelist(domain_name), 'ns': None,
+                                   'mx': None,
+                                   'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
+                    if whois_result:
+                        packet_dict.update({'registrar': whois_result['registrar']})
+                        packet_dict.update({'creation_date': whois_result['creation_date']})
+                        packet_dict.update({'last_updated': whois_result['last_updated']})
+                    update_db(create_nodes, packet_dict)
+                except AttributeError:
+                    print("Resource type not found in packet")
     else:
         print("Filetype not supported")
 
@@ -339,41 +342,37 @@ class MyHandler(FileSystemEventHandler):
 
 def load_csv():
     with driver.session() as session:
-        session.run("USING PERIODIC COMMIT "
-                    "LOAD CSV WITH HEADERS FROM $file AS row "
+       result = session.run("USING PERIODIC COMMIT 10000 "
+                    "LOAD CSV WITH HEADERS FROM 'file:///eidsiva.csv' AS row "
+                    "WITH row LIMIT 10000 "
+                    "WITH distinct row.domain_name as name "
+                    "MERGE (d:Domain {name: name}) "
                     "MERGE (src:IP_Host {ip: row.src}) "
-                    "MERGE (d:Domain {name: row.domain_name}) "
                     "MERGE (src)-[query:HAS_QUERY]->(d) "
-                    "SET query.last_seen = row.time",
-                    {"file": "file:///eidsiva.csv"})
-        """"
-        tx.run("LOAD CSV WITH HEADERS FROM $file AS row "
-               "MERGE (d:Domain {name: row.domain_name})",
-               {"file": "file:///eidsiva.csv"})
-        tx.run("LOAD CSV WITH HEADERS FROM $file AS row "
-               "MATCH (src:IP_Host {ip: row.src}) "
-               "MATCH (d:Domain {name: row.domain_name} "
-               "MERGE (src)-[query:HAS_QUERY]->(d)",
-                {"file": "file:///eidsiva.csv"})
-    """
-    """
-        tx.run("LOAD CSV WITH HEADERS FROM $file AS row "
-               "WITH row LIMIT 100 "
-               "MATCH (src:IP_Host {ip: row.src}) "
-               "MATCH (d:Domain {name: row.domain_name}) "
-               "MATCH (src)-[p:HAS_QUERY]->(d) WHERE NOT EXISTS(p.first_seen) "
-               "SET p.first_seen = row.time",
-               {"file": "file:///eidsiva.csv"})
-         
-        print(result)
-          """
+                    "ON CREATE SET query.first_seen = row.time "
+                    "SET query.last_seen = row.time "
+                    "RETURN d.name")
+       print(result)
 
+       """
+        session.run(
+                    "LOAD CSV WITH HEADERS FROM 'file:///eidsiva.csv' AS row "
+                    "WITH row LIMIT 10000 "
+                    "MERGE (d:Domain {name: row.domain_name})")
+        session.run(
+                    "LOAD CSV WITH HEADERS FROM 'file:///eidsiva.csv' AS row "
+                    "WITH row LIMIT 10000 "
+                    "MATCH (src:IP_Host {ip: row.src}) "
+                    "MATCH (d:Domain {name: row.domain_name}) "
+                    "MERGE (src)-[query:HAS_QUERY]->(d) "
+                    "ON CREATE SET query.first_seen = row.time "
+                    "SET query.last_seen = row.time")
+        """
 
-"""
-def query_db(self):
+def query_db(tx):
     with driver.session() as session:
-        session.run(load_csv)
-"""
+        session.write_transaction(tx)
+
 
 # print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
@@ -393,6 +392,7 @@ with open('datasets/eidsiva_test.csv', newline='') as csvfile:
 """
 
 load_csv()
+# query_db(load_csv)
 """
 for line in query_db(csv_load):
     print(line)
