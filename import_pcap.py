@@ -18,8 +18,11 @@ import ipaddress
 
 # Loads the official Neo4j Python driver
 uri = "bolt://localhost:7687"
-# driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
 driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
+#driver = GraphDatabase.driver(uri, auth=("neo4j", "test"), encrypted=False)
+
+f = open("datasets/whois_cache.csv", "w")
+f.close()
 
 
 # Creates nodes and relationships in Neo4j
@@ -223,16 +226,30 @@ def check_blacklist(domain_name):
 def check_whois(domain):
     try:
         whois_query = whois.query(domain)
+        cached = False
         if whois_query is not None:
             if whois_query.registrar is not '':
-                return {"registrar": whois_query.registrar,
-                        "creation_date": whois_query.creation_date,
-                        "last_updated": whois_query.last_updated}
+                with open('datasets/whois_cache.csv', 'r') as cache:
+                    for record in cache:
+                        if domain in record:
+                            cached = True
+                            return {"registrar": record[1],
+                                    "creation_date": record[2],
+                                    "last_updated": record[3]}
+                        else:
+                            with open('datasets/whois_cache.csv', 'a') as out_file:
+                                writer = csv.writer(out_file)
+                                writer.writerow(
+                                    (
+                                    domain, whois_query.registrar, whois_query.creation_date, whois_query.last_updated))
+                            return {"registrar": whois_query.registrar,
+                                    "creation_date": whois_query.creation_date,
+                                    "last_updated": whois_query.last_updated}
     except whois.exceptions.UnknownTld:
         print("Unknown TLD")
     except whois.exceptions.WhoisCommandFailed:
         print("Command timed out")
-    except whois.exceptions.FailedParsingWhoisOutput:
+    except (whois.exceptions.FailedParsingWhoisOutput, ValueError):
         print("Error in output")
     except KeyError:
         print("Key error")
@@ -275,6 +292,7 @@ def print_pcap(filename):
         i = 0
         for packet in cap:
             try:
+                """
                 print(packet)
                 print(packet.dns.field_names)
                 print(packet.dns.time)
@@ -284,7 +302,7 @@ def print_pcap(filename):
                 print(packet.dns.mx_mail_exchange)
                 print(packet.dns.a)
                 print(packet.dns.aaaa)
-
+                """
                 """
                 if packet.dns.qry_type == '12' and packet.dns.flags_response == '1':
                     print(packet)
@@ -295,6 +313,7 @@ def print_pcap(filename):
                     print(packet.dns.response_to)
                     print(packet.dns.time)
                 """
+                print(i)
                 if check_whitelist(packet):
                     print(packet.dns.qry_name + " Found in whitelist")
                     print(i)
@@ -311,6 +330,16 @@ def print_pcap(filename):
             fields = line.split(" ")
             for entry in fields:
                 print(entry)
+    elif filetype == 'csv':
+        with open(filename, 'r') as in_file:
+            reader = csv.reader(in_file, delimiter=',')
+            i = 0
+            for line in reader:
+                print(i)
+                i += 1
+                #print(line[8])
+                if check_blacklist(line[8]):
+                    print(line[8], " Found in blacklist")
     else:
         print("Unsupported filetype")
 
@@ -342,19 +371,16 @@ class MyHandler(FileSystemEventHandler):
 
 def load_csv():
     with driver.session() as session:
-       result = session.run("USING PERIODIC COMMIT 10000 "
+        session.run("USING PERIODIC COMMIT 10000 "
                     "LOAD CSV WITH HEADERS FROM 'file:///eidsiva.csv' AS row "
-                    "WITH row LIMIT 10000 "
-                    "WITH distinct row.domain_name as name "
-                    "MERGE (d:Domain {name: name}) "
+                    "MERGE (d:Domain {name: row.domain_name}) "
                     "MERGE (src:IP_Host {ip: row.src}) "
                     "MERGE (src)-[query:HAS_QUERY]->(d) "
                     "ON CREATE SET query.first_seen = row.time "
-                    "SET query.last_seen = row.time "
-                    "RETURN d.name")
-       print(result)
+                    "ON CREATE SET query.date = row.date "
+                    "SET query.last_seen = row.time ")
 
-       """
+        """
         session.run(
                     "LOAD CSV WITH HEADERS FROM 'file:///eidsiva.csv' AS row "
                     "WITH row LIMIT 10000 "
@@ -369,19 +395,19 @@ def load_csv():
                     "SET query.last_seen = row.time")
         """
 
+
 def query_db(tx):
     with driver.session() as session:
         session.write_transaction(tx)
 
 
-# print_pcap('botnet-capture-20110810-neris.pcap')
+#print_pcap('datasets/eidsiva_test.csv')
 # print(check_whois("google.com"))
 # check_blacklist()
 start_time = time.time()
-# pcap_to_dict('anon_dns_records.txt')
+#pcap_to_dict('botnet-capture-20110810-neris.pcap')
 
 # update_db(delete_db, "test")
-# print(check_ip('5.44.208.0'))
 """
 with open('datasets/eidsiva_test.csv', newline='') as csvfile:
     reader = csv.reader(csvfile, delimiter=',')
@@ -391,10 +417,15 @@ with open('datasets/eidsiva_test.csv', newline='') as csvfile:
                 print(row)
 """
 
-load_csv()
+#load_csv()
 # query_db(load_csv)
-"""
-for line in query_db(csv_load):
-    print(line)
-"""
+with open('datasets/eidsiva_test.csv', 'r') as in_file:
+    reader = csv.reader(in_file, delimiter=',')
+    i = 0
+    for line in reader:
+        if i > 100:
+            break
+        print(check_whois(line[8]))
+        i += 1
+
 print("--- %s seconds ---" % round(time.time() - start_time, 2))

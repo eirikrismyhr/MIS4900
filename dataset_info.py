@@ -39,6 +39,6 @@ def find_rrtypes(filename):
     return types
 
 print(line_count("datasets/anon_dns_records.txt"))
-#print(domain_num("datasets/anon_dns_records.txt"))
-print(find_rrtypes("datasets/eidsiva_test.csv"))
+print(domain_num("datasets/anon_dns_records.txt"))
+#print(find_rrtypes("datasets/eidsiva_test.csv"))
 
