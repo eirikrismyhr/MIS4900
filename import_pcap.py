@@ -19,7 +19,7 @@ import ipaddress
 # Loads the official Neo4j Python driver
 uri = "bolt://localhost:7687"
 driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
-#driver = GraphDatabase.driver(uri, auth=("neo4j", "test"), encrypted=False)
+# driver = GraphDatabase.driver(uri, auth=("neo4j", "test"), encrypted=False)
 
 f = open("datasets/whois_cache.csv", "w")
 f.close()
@@ -80,10 +80,8 @@ def create_nodes(tx, cap):
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (r:Registrar {name: $registrar}) "
                "MERGE (d)-[p:REGISTERED_BY]->(r) "
-               "SET p.creation_date = $creation_date "
-               "SET p.last_updated = $last_updated",
-               {"registrar": cap['registrar'], "host": cap['host'], "creation_date": cap['creation_date'],
-                "last_updated": cap['last_updated']})
+               "SET p.creation_date = $creation_date",
+               {"registrar": cap['registrar'], "host": cap['host'], "creation_date": cap['creation_date']})
     if cap['mx'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (m:Mail_Server {name: $mx}) "
@@ -122,8 +120,7 @@ def pcap_to_dict(filename):
                 packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': None,
                                'host': packet.dns.qry_name,
                                'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
-                               'registrar': None, 'creation_date': None,
-                               'last_updated': None, 'in_blacklists': check_blacklist(packet.dns.qry_name),
+                               'registrar': None, 'creation_date': None, 'in_blacklists': check_blacklist(packet.dns.qry_name),
                                'whitelisted': check_whitelist(packet.dns.qry_name), 'ns': None, 'mx': None,
                                'cname': None, 'txt': None, 'time': None, 'ptr': None, 'timestamp': None}
                 try:
@@ -139,7 +136,6 @@ def pcap_to_dict(filename):
                 if whois_result:
                     packet_dict.update({'registrar': whois_result['registrar']})
                     packet_dict.update({'creation_date': whois_result['creation_date']})
-                    packet_dict.update({'last_updated': whois_result['last_updated']})
                 update_db(create_nodes, packet_dict)
     elif filetype == 'txt':
         with open(filename, "r") as logfile:
@@ -154,14 +150,11 @@ def pcap_to_dict(filename):
                 try:
                     packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
                                    'in_blacklists': check_blacklist(domain_name), 'registrar': None,
-                                   'creation_date': None,
-                                   'last_updated': None, 'whitelisted': check_whitelist(domain_name), 'ns': None,
-                                   'mx': None,
-                                   'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
+                                   'creation_date': None, 'whitelisted': check_whitelist(domain_name), 'ns': None,
+                                   'mx': None, 'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
                     if whois_result:
                         packet_dict.update({'registrar': whois_result['registrar']})
                         packet_dict.update({'creation_date': whois_result['creation_date']})
-                        packet_dict.update({'last_updated': whois_result['last_updated']})
                     update_db(create_nodes, packet_dict)
                 except AttributeError:
                     print("Resource type not found in packet")
@@ -236,17 +229,14 @@ def check_whois(domain):
                         if domain == line[0]:
                             cached = True
                             result = {"registrar": line[1],
-                                    "creation_date": line[2],
-                                    "last_updated": line[3]}
+                                      "creation_date": line[2]}
                             break
                     if not cached:
                         with open('datasets/whois_cache.csv', 'a') as out_file:
                             writer = csv.writer(out_file)
-                            writer.writerow((domain, whois_query.registrar, whois_query.creation_date,
-                                             whois_query.last_updated))
+                            writer.writerow((domain, whois_query.registrar, whois_query.creation_date))
                         result = {"registrar": whois_query.registrar,
-                                "creation_date": whois_query.creation_date,
-                                "last_updated": whois_query.last_updated}
+                                  "creation_date": whois_query.creation_date}
     except whois.exceptions.UnknownTld:
         print("Unknown TLD")
     except whois.exceptions.WhoisCommandFailed:
@@ -341,7 +331,7 @@ def print_pcap(filename):
             for line in reader:
                 print(i)
                 i += 1
-                #print(line[8])
+                # print(line[8])
                 if check_blacklist(line[8]):
                     print(line[8], " Found in blacklist")
     else:
@@ -405,11 +395,11 @@ def query_db(tx):
         session.write_transaction(tx)
 
 
-#print_pcap('botnet-capture-20110810-neris.pcap')
+# print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
 start_time = time.time()
-#pcap_to_dict('botnet-capture-20110810-neris.pcap')
+pcap_to_dict('botnet-capture-20110810-neris.pcap')
 
 # update_db(delete_db, "test")
 """
@@ -421,7 +411,7 @@ with open('datasets/eidsiva_test.csv', newline='') as csvfile:
                 print(row)
 """
 
-#load_csv()
+# load_csv()
 # query_db(load_csv)
 """
 with open('datasets/eidsiva_test.csv', 'r') as in_file:
