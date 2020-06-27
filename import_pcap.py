@@ -150,7 +150,7 @@ def pcap_to_dict(filename):
                     return
                 fields = line.split(" ")
                 domain_name = remove_chars(fields[4])
-                whois_result = None
+                whois_result = check_whois(domain_name)
                 try:
                     packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
                                    'in_blacklists': check_blacklist(domain_name), 'registrar': None,
@@ -224,27 +224,29 @@ def check_blacklist(domain_name):
 
 # Finds registrar info for a specific domain name
 def check_whois(domain):
+    result = None
     try:
         whois_query = whois.query(domain)
         cached = False
         if whois_query is not None:
             if whois_query.registrar is not '':
                 with open('datasets/whois_cache.csv', 'r') as cache:
-                    for record in cache:
-                        if domain in record:
+                    reader = csv.reader(cache, delimiter=',')
+                    for line in reader:
+                        if domain == line[0]:
                             cached = True
-                            return {"registrar": record[1],
-                                    "creation_date": record[2],
-                                    "last_updated": record[3]}
-                        else:
-                            with open('datasets/whois_cache.csv', 'a') as out_file:
-                                writer = csv.writer(out_file)
-                                writer.writerow(
-                                    (
-                                    domain, whois_query.registrar, whois_query.creation_date, whois_query.last_updated))
-                            return {"registrar": whois_query.registrar,
-                                    "creation_date": whois_query.creation_date,
-                                    "last_updated": whois_query.last_updated}
+                            result = {"registrar": line[1],
+                                    "creation_date": line[2],
+                                    "last_updated": line[3]}
+                            break
+                    if not cached:
+                        with open('datasets/whois_cache.csv', 'a') as out_file:
+                            writer = csv.writer(out_file)
+                            writer.writerow((domain, whois_query.registrar, whois_query.creation_date,
+                                             whois_query.last_updated))
+                        result = {"registrar": whois_query.registrar,
+                                "creation_date": whois_query.creation_date,
+                                "last_updated": whois_query.last_updated}
     except whois.exceptions.UnknownTld:
         print("Unknown TLD")
     except whois.exceptions.WhoisCommandFailed:
@@ -253,6 +255,7 @@ def check_whois(domain):
         print("Error in output")
     except KeyError:
         print("Key error")
+    return result
 
 
 # Checks if a resolved IP address is found in any IP blacklists
@@ -292,8 +295,9 @@ def print_pcap(filename):
         i = 0
         for packet in cap:
             try:
-                """
+
                 print(packet)
+                """
                 print(packet.dns.field_names)
                 print(packet.dns.time)
                 print(packet.dns.resp_type)
@@ -401,7 +405,7 @@ def query_db(tx):
         session.write_transaction(tx)
 
 
-#print_pcap('datasets/eidsiva_test.csv')
+#print_pcap('botnet-capture-20110810-neris.pcap')
 # print(check_whois("google.com"))
 # check_blacklist()
 start_time = time.time()
@@ -419,13 +423,15 @@ with open('datasets/eidsiva_test.csv', newline='') as csvfile:
 
 #load_csv()
 # query_db(load_csv)
+"""
 with open('datasets/eidsiva_test.csv', 'r') as in_file:
     reader = csv.reader(in_file, delimiter=',')
     i = 0
     for line in reader:
         if i > 100:
             break
+        #print(line[8])
         print(check_whois(line[8]))
         i += 1
-
+"""
 print("--- %s seconds ---" % round(time.time() - start_time, 2))
