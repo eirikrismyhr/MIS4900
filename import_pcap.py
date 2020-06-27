@@ -61,9 +61,7 @@ def create_nodes(tx, cap):
     if cap['dst'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (i:IP {ip: $dst, blacklisted: $blacklisted}) "
-               "MERGE (d)-[:RESOLVES_TO]->(i) "
-               "MERGE (i)-[:IN_NETWORK]->(a:AS) "
-               "MERGE (adm:ISP)-[:ADMINISTERS]->(a)",
+               "MERGE (d)-[:RESOLVES_TO]->(i)",
                {"host": cap['host'], "dst": cap['dst'], "blacklisted": check_ip(cap['dst'])})
         if cap['dst'] is not None:
             tx.run("MATCH (d:Domain {name: $host}) "
@@ -98,6 +96,11 @@ def create_nodes(tx, cap):
                "MATCH (i)-[p:HAS_QUERY]->(d) WHERE NOT EXISTS(p.first_seen) "
                "SET p.first_seen = $time",
                {"host": cap['host'], "src": cap['src'], "time": cap['timestamp']})
+    if cap['asn'] is not None:
+        tx.run("MATCH (i:IP {ip: $dst}) "
+               "MERGE (i)-[:IN_NETWORK]->(as:AS {number: $asn}) "
+               "MERGE (isp:ISP {name: $isp})-[:ADMINISTERS]->(as)",
+               {"dst": cap['dst'], "asn": cap['asn'], "isp": cap['isp']})
 
 
 # Performs cypher transaction
@@ -117,13 +120,16 @@ def pcap_to_dict(filename):
                 if packet.dns.flags_response == '0':
                     src = packet.ip.src
                 whois_result = check_whois(packet.dns.qry_name)
+                geo_result = None
                 packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': None,
                                'host': packet.dns.qry_name,
                                'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
                                'registrar': None, 'creation_date': None, 'in_blacklists': check_blacklist(packet.dns.qry_name),
                                'whitelisted': check_whitelist(packet.dns.qry_name), 'ns': None, 'mx': None,
-                               'cname': None, 'txt': None, 'time': None, 'ptr': None, 'timestamp': None}
+                               'cname': None, 'txt': None, 'time': None, 'ptr': None, 'timestamp': None, 'asn': None,
+                               'isp': None}
                 try:
+                    geo_result = check_geo(packet.dns.a)
                     packet_dict.update({'dst': packet.dns.a})
                     packet_dict.update({'ns': packet.dns.ns})
                     packet_dict.update({'mx': packet.dns.mx_mail_exchange})
@@ -136,6 +142,9 @@ def pcap_to_dict(filename):
                 if whois_result:
                     packet_dict.update({'registrar': whois_result['registrar']})
                     packet_dict.update({'creation_date': whois_result['creation_date']})
+                if geo_result:
+                    packet_dict.update({'asn': geo_result['asn']})
+                    packet_dict.update({'isp': geo_result['isp']})
                 update_db(create_nodes, packet_dict)
     elif filetype == 'txt':
         with open(filename, "r") as logfile:
@@ -264,6 +273,24 @@ def check_ip(ip):
     for file in blacklists:
         file.close()
     return in_list
+
+
+def check_geo(ip):
+    ip_version = ipaddress.ip_address(str(ip))
+    if ip_version.version == 4:
+        with open('datasets/GeoLite2-ASN-Blocks-IPv4.csv', newline='') as ipv4_list:
+            reader = csv.reader(ipv4_list, delimiter=',')
+            next(reader, None)
+            for line in reader:
+                if ipaddress.IPv4Address(ip) in ipaddress.IPv4Network(line[0]):
+                    return {"asn": line[1], "isp": line[2]}
+    else:
+        with open('datasets/GeoLite2-ASN-Blocks-IPv6.csv', newline='') as ipv6_list:
+            reader = csv.reader(ipv6_list, delimiter=',')
+            next(reader, None)
+            for line in reader:
+                if ipaddress.IPv6Address(ip) in ipaddress.IPv6Network(line[0]):
+                    return {"asn": line[1], "isp": line[2]}
 
 
 # Strips unwanted characters from domain names
@@ -424,4 +451,5 @@ with open('datasets/eidsiva_test.csv', 'r') as in_file:
         print(check_whois(line[8]))
         i += 1
 """
+
 print("--- %s seconds ---" % round(time.time() - start_time, 2))
