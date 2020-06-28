@@ -1,33 +1,28 @@
 from neo4j import GraphDatabase
 import pyshark
-from datetime import datetime, timedelta
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 import time
 import csv
 import whois
 import ipaddress
 
 """
-1. Read each packet from pcap file
+1. Read each packet from log file
 2. Convert each packet to python dict
 3. Create nodes and relationships in Neo4j for each dict
 4. Connect nodes from each packet
 """
-# graph = Graph(password="mis4900")
 
 # Loads the official Neo4j Python driver
 uri = "bolt://localhost:7687"
 driver = GraphDatabase.driver(uri, auth=("neo4j", "mis4900"), encrypted=False)
-# driver = GraphDatabase.driver(uri, auth=("neo4j", "test"), encrypted=False)
 
+# Reset WHOIS cache
 f = open("datasets/whois_cache.csv", "w")
 f.close()
 
 
 # Creates nodes and relationships in Neo4j
-def create_nodes(tx, cap):
-    # print(cap['registrar'])
+def create_graph(tx, cap):
     tx.run("MERGE (d:Domain {name: $host, blacklisted: $in_blacklists, whitelisted: $whitelisted}) ",
            {"host": cap['host'], "src": cap['src'], "in_blacklists": cap['in_blacklists'],
             "whitelisted": cap['whitelisted']})
@@ -51,13 +46,11 @@ def create_nodes(tx, cap):
                "MERGE (t:TXT {content: $txt})"
                "MERGE (d)-[:HAS_DESCRIPTION]->(t)",
                {"host": cap['host'], "txt": cap['txt']})
-        """
-    if cap['dst'] is None:
+    if cap['nxdomain'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (n:NXDOMAIN) "
                "MERGE (d)-[:NOT_EXIST]->(n)",
                {"host": cap['host']})
-        """
     if cap['dst'] is not None:
         tx.run("MATCH (d:Domain {name: $host}) "
                "MERGE (i:IP {ip: $dst, blacklisted: $blacklisted}) "
@@ -109,8 +102,8 @@ def update_db(transaction, package):
         session.write_transaction(transaction, package)
 
 
-# Creates dictionary with values from log file and passes it to create_nodes
-def pcap_to_dict(filename):
+# Creates dictionary with values from log file and passes it to create_graph
+def log_to_dict(filename):
     cap = pyshark.FileCapture(filename)
     filetype = filename.split(".")[1]
     if filetype == 'pcap':
@@ -124,10 +117,11 @@ def pcap_to_dict(filename):
                 packet_dict = {'trans_id': packet.dns.id, 'src': src, 'dst': None,
                                'host': packet.dns.qry_name,
                                'qry_type': packet.dns.qry_type, 'qry_class': packet.dns.qry_class,
-                               'registrar': None, 'creation_date': None, 'in_blacklists': check_blacklist(packet.dns.qry_name),
+                               'registrar': None, 'creation_date': None, 'in_blacklists':
+                                   check_blacklist(packet.dns.qry_name),
                                'whitelisted': check_whitelist(packet.dns.qry_name), 'ns': None, 'mx': None,
                                'cname': None, 'txt': None, 'time': None, 'ptr': None, 'timestamp': None, 'asn': None,
-                               'isp': None}
+                               'isp': None, 'nxdomain': None}
                 try:
                     geo_result = check_geo(packet.dns.a)
                     packet_dict.update({'dst': packet.dns.a})
@@ -137,6 +131,7 @@ def pcap_to_dict(filename):
                     packet_dict.update({'txt': packet.dns.txt})
                     packet_dict.update({'ptr': packet.dns.ptr_domain_name})
                     packet_dict.update({'time': packet.dns.time})
+                    packet_dict.update({'nxdomain': packet.dns.nxdomain})
                 except AttributeError:
                     print("Resource type not found in packet")
                 if whois_result:
@@ -145,14 +140,11 @@ def pcap_to_dict(filename):
                 if geo_result:
                     packet_dict.update({'asn': geo_result['asn']})
                     packet_dict.update({'isp': geo_result['isp']})
-                update_db(create_nodes, packet_dict)
+                update_db(create_graph, packet_dict)
     elif filetype == 'txt':
         with open(filename, "r") as logfile:
             i = 0
             for line in logfile:
-                i += 1
-                if i > 10000:
-                    return
                 fields = line.split(" ")
                 domain_name = remove_chars(fields[4])
                 whois_result = check_whois(domain_name)
@@ -160,20 +152,18 @@ def pcap_to_dict(filename):
                     packet_dict = {'timestamp': fields[0] + ' ' + fields[1], 'src': fields[3], 'host': domain_name,
                                    'in_blacklists': check_blacklist(domain_name), 'registrar': None,
                                    'creation_date': None, 'whitelisted': check_whitelist(domain_name), 'ns': None,
-                                   'mx': None, 'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None}
+                                   'mx': None, 'cname': None, 'txt': None, 'time': None, 'ptr': None, 'dst': None,
+                                   'nxdomain': None, 'asn': None, 'isp': None}
                     if whois_result:
                         packet_dict.update({'registrar': whois_result['registrar']})
                         packet_dict.update({'creation_date': whois_result['creation_date']})
-                    update_db(create_nodes, packet_dict)
+                    update_db(create_graph, packet_dict)
                 except AttributeError:
                     print("Resource type not found in packet")
+    elif filetype == 'csv':
+        load_csv()
     else:
         print("Filetype not supported")
-
-
-# Deletes database, if necessary
-def delete_db(tx):
-    tx.run("MATCH (n) DETACH DELETE n")
 
 
 # Checks if domain names in log files are known legitimate domains
@@ -198,13 +188,10 @@ def check_blacklist(domain_name):
     for bl in blacklists:
         domains = []
         for line in bl:
-            # print(line)
             line = line.split("  ")
-            # print(line[1][:-1])
             if line[0] == '127.0.0.1':
                 domains.append(line)
         for line in domains:
-            # print("line[0] is: " + line[0])
             if line[1] == domain_name or ('www.' + line[1]) == domain_name:
                 in_list = True
                 break
@@ -254,6 +241,8 @@ def check_whois(domain):
         print("Error in output")
     except KeyError:
         print("Key error")
+    except whois.exceptions.UnknownDateFormat:
+        print("Unknown date format")
     return result
 
 
@@ -275,6 +264,7 @@ def check_ip(ip):
     return in_list
 
 
+# Finds ASN and ISP for each IP
 def check_geo(ip):
     ip_version = ipaddress.ip_address(str(ip))
     if ip_version.version == 4:
@@ -306,34 +296,12 @@ def remove_chars(string):
 # Prints content of log files, packet by packet
 def print_pcap(filename):
     filetype = filename.split(".")[1]
-
     if filetype == 'pcap':
         cap = pyshark.FileCapture(filename, display_filter='dns')
         i = 0
         for packet in cap:
             try:
-
                 print(packet)
-                """
-                print(packet.dns.field_names)
-                print(packet.dns.time)
-                print(packet.dns.resp_type)
-                print(packet.dns.resp_name)
-                print(packet.dns.ns)
-                print(packet.dns.mx_mail_exchange)
-                print(packet.dns.a)
-                print(packet.dns.aaaa)
-                """
-                """
-                if packet.dns.qry_type == '12' and packet.dns.flags_response == '1':
-                    print(packet)
-                    print(packet.dns.field_names)
-                    print(packet.dns.qry_name)
-                    print(packet.dns.qry_type)
-                    print(packet.dns.ptr_domain_name)
-                    print(packet.dns.response_to)
-                    print(packet.dns.time)
-                """
                 print(i)
                 if check_whitelist(packet):
                     print(packet.dns.qry_name + " Found in whitelist")
@@ -358,98 +326,27 @@ def print_pcap(filename):
             for line in reader:
                 print(i)
                 i += 1
-                # print(line[8])
                 if check_blacklist(line[8]):
                     print(line[8], " Found in blacklist")
     else:
         print("Unsupported filetype")
 
-    event_handler = MyHandler()
-    observer = Observer()
-    observer.schedule(event_handler, path='.', recursive=False)
-    observer.start()
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
-
-
-# Checks if any files have been modified
-class MyHandler(FileSystemEventHandler):
-    def __init__(self):
-        self.last_modified = datetime.now()
-
-    def on_modified(self, event):
-        if datetime.now() - self.last_modified < timedelta(seconds=1):
-            return
-        else:
-            self.last_modified = datetime.now()
-        print(f'Event type: {event.event_type}  path : {event.src_path}')
-        print(event.is_directory)
-
 
 def load_csv():
     with driver.session() as session:
         session.run("USING PERIODIC COMMIT 10000 "
-                    "LOAD CSV WITH HEADERS FROM 'file:///eidsiva.csv' AS row "
-                    "MERGE (d:Domain {name: row.domain_name}) "
-                    "MERGE (src:IP_Host {ip: row.src}) "
-                    "MERGE (src)-[query:HAS_QUERY]->(d) "
-                    "ON CREATE SET query.first_seen = row.time "
-                    "ON CREATE SET query.date = row.date "
-                    "SET query.last_seen = row.time ")
-
-        """
-        session.run(
-                    "LOAD CSV WITH HEADERS FROM 'file:///eidsiva.csv' AS row "
-                    "WITH row LIMIT 10000 "
-                    "MERGE (d:Domain {name: row.domain_name})")
-        session.run(
-                    "LOAD CSV WITH HEADERS FROM 'file:///eidsiva.csv' AS row "
-                    "WITH row LIMIT 10000 "
-                    "MATCH (src:IP_Host {ip: row.src}) "
-                    "MATCH (d:Domain {name: row.domain_name}) "
-                    "MERGE (src)-[query:HAS_QUERY]->(d) "
-                    "ON CREATE SET query.first_seen = row.time "
-                    "SET query.last_seen = row.time")
-        """
-
-
-def query_db(tx):
-    with driver.session() as session:
-        session.write_transaction(tx)
+                             "LOAD CSV WITH HEADERS FROM 'file:///eidsiva.csv' AS row "
+                             "MERGE (d:Domain {name: row.domain_name}) "
+                             "MERGE (src:IP_Host {ip: row.src}) "
+                             "MERGE (src)-[query:HAS_QUERY]->(d) "
+                             "ON CREATE SET query.first_seen = row.time "
+                             "ON CREATE SET query.date = row.date "
+                             "SET query.last_seen = row.time "
+                             "RETURN row.domain_name")
 
 
 # print_pcap('botnet-capture-20110810-neris.pcap')
-# print(check_whois("google.com"))
-# check_blacklist()
 start_time = time.time()
-pcap_to_dict('botnet-capture-20110810-neris.pcap')
-
-# update_db(delete_db, "test")
-"""
-with open('datasets/eidsiva_test.csv', newline='') as csvfile:
-    reader = csv.reader(csvfile, delimiter=',')
-    for row in reader:
-        for field in row:
-            if '"' in field:
-                print(row)
-"""
-
-# load_csv()
-# query_db(load_csv)
-"""
-with open('datasets/eidsiva_test.csv', 'r') as in_file:
-    reader = csv.reader(in_file, delimiter=',')
-    i = 0
-    for line in reader:
-        if i > 100:
-            break
-        #print(line[8])
-        print(check_whois(line[8]))
-        i += 1
-"""
+log_to_dict('datasets/botnet-capture-20110810-neris.pcap')
 
 print("--- %s seconds ---" % round(time.time() - start_time, 2))
