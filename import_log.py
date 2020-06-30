@@ -91,7 +91,8 @@ def create_graph(tx, cap):
                {"host": cap['host'], "src": cap['src'], "time": cap['timestamp']})
     if cap['asn'] is not None:
         tx.run("MATCH (i:IP {ip: $dst}) "
-               "MERGE (i)-[:IN_NETWORK]->(as:AS {number: $asn}) "
+               "MERGE (as:AS {number: $asn}) "
+               "MERGE (i)-[:IN_NETWORK]->(as) "
                "MERGE (isp:ISP {name: $isp}) "
                "MERGE (isp)-[:ADMINISTERS]->(as)",
                {"dst": cap['dst'], "asn": cap['asn'], "isp": cap['isp']})
