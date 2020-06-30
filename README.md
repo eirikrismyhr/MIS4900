@@ -7,6 +7,6 @@ Python functions
   
 The databases folder contains Neo4j database dump files with a subset of the content used in the testing phase of this project.
 The dump files can be loaded into Neo4j using the following command:
-'''
+```
 $neo4j-home> bin/neo4j-admin load --from=/backups/neo4j/database.dump --database=neo4j --force
-'''
+```
